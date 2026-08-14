@@ -12,6 +12,7 @@ import { initTheme, initTabs, toast, setStatus, downloadText, slug } from './ui/
 import { renderSections, renderData, renderInspector, renderSelectionSummary } from './ui/reports.js';
 import { buildModel } from './model/builder.js';
 import { generateScript } from './codegen/openseespy.js';
+import { getRecord, subscribeGM, exportSeries, scriptFileName } from './model/groundmotion.js';
 import { createViewer } from './viewer/viewer.js';
 import { fmt } from './units.js';
 
@@ -62,6 +63,9 @@ el('btn-compile').addEventListener('click', compile);
 el('btn-copy').addEventListener('click', copyScript);
 el('btn-download').addEventListener('click', download);
 el('btn-download-2').addEventListener('click', download);
+el('btn-download-gm').addEventListener('click', downloadRecord);
+
+subscribeGM(() => { markStale(); updateRecordButton(); });
 el('inspector-close').addEventListener('click', () => {
   dom.inspector.hidden = true;
   viewer.clearSelection();
@@ -173,7 +177,8 @@ function compile() {
 
 /** Regenerates every panel that depends on the current model or theme. */
 function refreshPanels() {
-  script = generateScript(state, model);
+  script = generateScript(state, model, getRecord());
+  updateRecordButton();
   dom.codeOut.innerHTML = highlightPython(script);
   dom.codeMeta.textContent =
     `${script.split('\n').length} lines · ${(new Blob([script]).size / 1024).toFixed(1)} kB · `
@@ -246,7 +251,24 @@ function populatePickers() {
 function download() {
   if (!script) return toast('Nothing to download', 'Compile the model first.', 'warn');
   downloadText(`${slug(state.projectName)}.py`, script);
-  toast('Script saved', 'Run it with: python <file>.py', 'ok');
+  const rec = getRecord();
+  toast('Script saved',
+    rec && state.runTimeHistory
+      ? `Put ${scriptFileName(rec)} in the same folder, then run: python <file>.py`
+      : 'Run it with: python <file>.py',
+    'ok');
+}
+
+/** The cleaned one-column record the generated timeSeries('Path', …) reads. */
+function downloadRecord() {
+  const rec = getRecord();
+  if (!rec) return;
+  downloadText(scriptFileName(rec), exportSeries(rec));
+  toast('Record saved', `${rec.npts} values, one per line.`, 'ok');
+}
+
+function updateRecordButton() {
+  el('btn-download-gm').hidden = !getRecord();
 }
 
 async function copyScript() {

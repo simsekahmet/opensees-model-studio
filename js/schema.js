@@ -18,6 +18,7 @@
  */
 
 import { UNIT_SYSTEMS } from './units.js';
+import { CONCRETE_MODELS, STEEL_MODELS, modelsOf, matKey } from './model/materials.js';
 
 const systemOptions = Object.entries(UNIT_SYSTEMS).map(([value, u]) => ({ value, label: u.label }));
 
@@ -71,62 +72,28 @@ export const SCHEMA = [
       ]},
 
       { kind: 'sub', label: 'Concrete', showIf: isRC },
-      { id: 'concreteMat', type: 'select', label: 'Concrete model', d: 'Concrete02', showIf: isRC, options: [
-        { value: 'Elastic',     label: 'Elastic' },
-        { value: 'Concrete01',  label: 'Concrete01 — Kent–Scott–Park' },
-        { value: 'Concrete02',  label: 'Concrete02 — linear tension softening' },
-        { value: 'Concrete04',  label: 'Concrete04 — Popovics' },
-      ]},
-      { id: 'fpc', type: 'number', label: 'f′c (compressive strength)', unit: 'stress', showIf: isRC,
-        d: { 'kN-m': -30000, 'N-mm': -30, 'kip-in': -4.35 },
-        hint: 'Negative in compression, per OpenSees sign convention.' },
-      { id: 'epsc0', type: 'number', label: 'εc0 at f′c', step: 0.0001, showIf: isRC,
-        d: -0.002, half: true },
-      { id: 'epsU', type: 'number', label: 'εcu (crushing)', step: 0.0001, showIf: isRC,
-        d: -0.0035, half: true },
-      { id: 'fpcu', type: 'number', label: 'f′cu (residual)', unit: 'stress',
-        showIf: (s) => isRC(s) && ['Concrete01', 'Concrete02'].includes(s.concreteMat),
-        d: { 'kN-m': -6000, 'N-mm': -6, 'kip-in': -0.87 } },
-      { id: 'ft', type: 'number', label: 'ft (tensile strength)', unit: 'stress', half: true,
-        showIf: (s) => isRC(s) && s.concreteMat === 'Concrete02',
-        d: { 'kN-m': 3000, 'N-mm': 3, 'kip-in': 0.435 } },
-      { id: 'Ets', type: 'number', label: 'Ets (tension softening)', unit: 'stress', half: true,
-        showIf: (s) => isRC(s) && s.concreteMat === 'Concrete02',
-        d: { 'kN-m': 1500000, 'N-mm': 1500, 'kip-in': 218 } },
-      { id: 'lambdaC', type: 'number', label: 'λ (unloading slope ratio)', step: 0.01,
-        showIf: (s) => isRC(s) && s.concreteMat === 'Concrete02', d: 0.1 },
-      { id: 'Ec', type: 'number', label: 'Ec (elastic modulus)', unit: 'stress', showIf: isRC,
+      { id: 'concreteMat', type: 'select', label: 'Concrete model', d: 'Concrete02', showIf: isRC,
+        options: modelOptions(CONCRETE_MODELS) },
+      ...materialFields('conc', 'concreteMat', isRC),
+      { id: 'confineFactor', type: 'number', label: 'Core confinement factor K', step: 0.05, d: 1.30,
+        showIf: (s) => isRC(s) && isFiber(s) && !!CONCRETE_MODELS[s.concreteMat]?.confine,
+        hint: 'Core strength = K · f′c and core strain = 1 + 5(K − 1) times the cover value.' },
+
+      { kind: 'sub', label: 'Steel / reinforcement' },
+      { id: 'steelMat', type: 'select', label: 'Steel model', d: 'Steel02',
+        options: modelOptions(STEEL_MODELS) },
+      ...materialFields('steel', 'steelMat', () => true),
+
+      { kind: 'sub', label: 'General properties' },
+      { id: 'Ec', type: 'number', label: 'Ec — concrete elastic modulus', unit: 'stress', showIf: isRC,
         d: { 'kN-m': 30000000, 'N-mm': 30000, 'kip-in': 4350 },
-        hint: 'Used for elastic sections, Concrete04 and section property output.' },
+        hint: 'Used for elastic sections and the reported section properties.' },
+      { id: 'Es', type: 'number', label: 'Es — steel elastic modulus', unit: 'stress', showIf: isSteel,
+        d: { 'kN-m': 200000000, 'N-mm': 200000, 'kip-in': 29000 },
+        hint: 'Used for elastic sections and the reported section properties.' },
       { id: 'nu', type: 'number', label: 'Poisson ratio ν', step: 0.01, d: 0.2, half: true },
       { id: 'density', type: 'number', label: 'Mass density', unit: 'massVol', half: true,
         d: { 'kN-m': 2.4, 'N-mm': 2.4e-9, 'kip-in': 2.25e-4 } },
-      { id: 'confineFactor', type: 'number', label: 'Core confinement factor K', step: 0.05, d: 1.30,
-        showIf: (s) => isRC(s) && isFiber(s),
-        hint: 'Confined core strength = K · f′c (Mander-type enhancement).' },
-
-      { kind: 'sub', label: 'Steel / reinforcement' },
-      { id: 'steelMat', type: 'select', label: 'Steel model', d: 'Steel02', options: [
-        { value: 'Elastic',    label: 'Elastic' },
-        { value: 'ElasticPP',  label: 'ElasticPP — elastic perfectly plastic' },
-        { value: 'Steel01',    label: 'Steel01 — bilinear kinematic' },
-        { value: 'Steel02',    label: 'Steel02 — Giuffré–Menegotto–Pinto' },
-        { value: 'Hysteretic', label: 'Hysteretic — pinched' },
-      ]},
-      { id: 'Fy', type: 'number', label: 'Fy (yield strength)', unit: 'stress', half: true,
-        d: { 'kN-m': 420000, 'N-mm': 420, 'kip-in': 60 } },
-      { id: 'Es', type: 'number', label: 'Es (elastic modulus)', unit: 'stress', half: true,
-        d: { 'kN-m': 200000000, 'N-mm': 200000, 'kip-in': 29000 } },
-      { id: 'bHard', type: 'number', label: 'b (strain-hardening ratio)', step: 0.001, d: 0.01,
-        showIf: (s) => ['Steel01', 'Steel02'].includes(s.steelMat) },
-      { id: 'R0',  type: 'number', label: 'R0',  step: 0.5,  d: 18, half: true, showIf: (s) => s.steelMat === 'Steel02' },
-      { id: 'cR1', type: 'number', label: 'cR1', step: 0.005, d: 0.925, half: true, showIf: (s) => s.steelMat === 'Steel02' },
-      { id: 'cR2', type: 'number', label: 'cR2', step: 0.005, d: 0.15, showIf: (s) => s.steelMat === 'Steel02' },
-      { id: 'pinchX', type: 'number', label: 'pinchX', step: 0.05, d: 0.8, half: true, showIf: (s) => s.steelMat === 'Hysteretic' },
-      { id: 'pinchY', type: 'number', label: 'pinchY', step: 0.05, d: 0.5, half: true, showIf: (s) => s.steelMat === 'Hysteretic' },
-      { id: 'damage1', type: 'number', label: 'damage1', step: 0.01, d: 0.0, half: true, showIf: (s) => s.steelMat === 'Hysteretic' },
-      { id: 'damage2', type: 'number', label: 'damage2', step: 0.01, d: 0.0, half: true, showIf: (s) => s.steelMat === 'Hysteretic' },
-      { id: 'betaH', type: 'number', label: 'beta', step: 0.05, d: 0.0, showIf: (s) => s.steelMat === 'Hysteretic' },
     ],
   },
 
@@ -313,33 +280,101 @@ export const SCHEMA = [
   {
     id: 'analysis', title: 'Analysis',
     fields: [
-      { id: 'runGravity', type: 'check', d: true, label: 'Run gravity analysis' },
-      { id: 'gravitySteps', type: 'number', label: 'Load steps', d: 10, min: 1, max: 500, step: 1,
-        showIf: (s) => s.runGravity },
-
       { kind: 'sub', label: 'Solution strategy' },
       { id: 'constraintsCmd', type: 'select', label: 'constraints', d: 'Transformation', options: opts(
-        'Transformation', 'Plain', 'Penalty', 'Lagrange') },
-      { id: 'numbererCmd', type: 'select', label: 'numberer', d: 'RCM', options: opts('RCM', 'Plain', 'AMD') },
+        'Plain', 'Transformation', 'Penalty', 'Lagrange') },
+      { id: 'penaltyAlpha', type: 'number', label: 'Penalty αS = αM', d: 1e14, step: 1e12,
+        showIf: (s) => s.constraintsCmd === 'Penalty' },
+      { id: 'lagrangeAlpha', type: 'number', label: 'Lagrange αS = αM', d: 1.0, step: 0.1,
+        showIf: (s) => s.constraintsCmd === 'Lagrange' },
+      { id: 'numbererCmd', type: 'select', label: 'numberer', d: 'RCM', options: opts(
+        'Plain', 'RCM', 'AMD', 'ParallelPlain', 'ParallelRCM'),
+        hint: 'The two Parallel numberers only apply to an MPI run.' },
       { id: 'systemCmd', type: 'select', label: 'system', d: 'BandGeneral', options: opts(
-        'BandGeneral', 'BandSPD', 'ProfileSPD', 'SuperLU', 'UmfPack', 'FullGeneral', 'SparseSYM') },
+        'BandGeneral', 'BandSPD', 'ProfileSPD', 'SuperLU', 'UmfPack', 'FullGeneral', 'SparseSYM',
+        'Diagonal', 'MUMPS', 'PFEM', 'PythonSparse'),
+        hint: 'PFEM and PythonSparse need a matching analysis type or a Python solver object.' },
       { id: 'testCmd', type: 'select', label: 'test', d: 'NormDispIncr', options: opts(
-        'NormDispIncr', 'NormUnbalance', 'EnergyIncr', 'RelativeNormDispIncr', 'RelativeEnergyIncr') },
+        'NormUnbalance', 'NormDispIncr', 'EnergyIncr',
+        'RelativeNormUnbalance', 'RelativeNormDispIncr', 'RelativeTotalNormDispIncr', 'RelativeEnergyIncr',
+        'FixedNumIter', 'NormDispAndUnbalance', 'NormDispOrUnbalance') },
       { id: 'tol', type: 'number', label: 'Tolerance', step: 1e-9, d: 1e-8, half: true },
       { id: 'maxIter', type: 'number', label: 'Max iterations', d: 100, min: 1, max: 5000, step: 1, half: true },
       { id: 'algorithmCmd', type: 'select', label: 'algorithm', d: 'Newton', options: opts(
-        'Newton', 'ModifiedNewton', 'KrylovNewton', 'NewtonLineSearch', 'BFGS', 'Broyden', 'Linear') },
+        'Linear', 'Newton', 'NewtonLineSearch', 'ModifiedNewton', 'KrylovNewton',
+        'SecantNewton', 'RaphsonNewton', 'PeriodicNewton', 'BFGS', 'Broyden') },
 
-      { kind: 'sub', label: 'Modal analysis' },
-      { id: 'runModal', type: 'check', d: true, label: 'Run eigenvalue analysis' },
+      { kind: 'sub', label: 'Gravity' },
+      { id: 'runGravity', type: 'check', d: true, label: 'Run gravity analysis',
+        hint: 'Applied first and held constant; every case below starts from this state.' },
+      { id: 'gravityIntegrator', type: 'select', label: 'Static integrator', d: 'LoadControl',
+        showIf: (s) => s.runGravity, options: opts(
+          'LoadControl', 'DisplacementControl', 'ParallelDisplacementControl', 'MinUnbalDispNorm', 'ArcLength') },
+      { id: 'gravitySteps', type: 'number', label: 'Load steps', d: 10, min: 1, max: 500, step: 1,
+        showIf: (s) => s.runGravity },
+      { id: 'arcLength', type: 'number', label: 'Arc length s', d: 1.0, step: 0.1, half: true,
+        showIf: (s) => s.runGravity && s.gravityIntegrator === 'ArcLength' },
+      { id: 'arcAlpha', type: 'number', label: 'Arc α', d: 1.0, step: 0.1, half: true,
+        showIf: (s) => s.runGravity && s.gravityIntegrator === 'ArcLength' },
+
+      { kind: 'sub', label: 'Load cases to run' },
+      { id: 'runModal', type: 'check', d: true, label: 'Modal — eigenvalue analysis' },
       { id: 'numModes', type: 'number', label: 'Number of modes', d: 6, min: 1, max: 60, step: 1,
-        showIf: (s) => s.runModal },
+        half: true, showIf: (s) => s.runModal },
       { id: 'eigenSolver', type: 'select', label: 'Eigen solver', d: '-genBandArpack',
         showIf: (s) => s.runModal, options: [
           { value: '-genBandArpack', label: '-genBandArpack' },
           { value: '-fullGenLapack', label: '-fullGenLapack' },
           { value: '-symmBandLapack', label: '-symmBandLapack' },
+          { value: '-symmBandArpack', label: '-symmBandArpack' },
         ]},
+
+      { id: 'runPushover', type: 'check', d: false, label: 'Pushover — monotonic lateral' },
+      ...pushoverFields((s) => s.runPushover, 'push'),
+
+      { id: 'runCyclic', type: 'check', d: false, label: 'Cyclic — reversed displacement cycles' },
+      ...pushoverFields((s) => s.runCyclic, 'cyc'),
+      { id: 'cycAmplitudes', type: 'text', label: 'Drift amplitudes', d: '0.0025, 0.005, 0.01, 0.02, 0.03',
+        showIf: (s) => s.runCyclic, hint: 'Ratios of the total building height, run in the order given.' },
+      { id: 'cycRepeats', type: 'number', label: 'Cycles per amplitude', d: 2, min: 1, max: 10, step: 1,
+        showIf: (s) => s.runCyclic },
+
+      { id: 'runTimeHistory', type: 'check', d: false, label: 'Time history — ground motion' },
+      { id: 'gmFile', type: 'file', label: 'Acceleration record',
+        showIf: (s) => s.runTimeHistory,
+        hint: 'PEER NGA or plain text. The script reads the exported one-column file next to it.' },
+      { id: 'gmDir', type: 'select', label: 'Excitation direction', d: '1',
+        showIf: (s) => s.runTimeHistory, options: [
+          { value: '1', label: 'DOF 1 — global X' },
+          { value: '2', label: 'DOF 2 — global Y' },
+          { value: '3', label: 'DOF 3 — global Z' },
+        ]},
+      { id: 'gmDt', type: 'number', label: 'Record dt [s]', d: 0.01, step: 0.001, half: true,
+        showIf: (s) => s.runTimeHistory },
+      { id: 'gmScale', type: 'number', label: 'Scale factor', d: 1.0, step: 0.05, half: true,
+        showIf: (s) => s.runTimeHistory,
+        hint: 'Multiplied by g, so a record in units of g needs no further conversion.' },
+      { id: 'thIntegrator', type: 'select', label: 'Transient integrator', d: 'Newmark',
+        showIf: (s) => s.runTimeHistory, options: opts(
+          'Newmark', 'HHT', 'GeneralizedAlpha', 'TRBDF2', 'CentralDifference', 'ExplicitDifference') },
+      { id: 'newmarkGamma', type: 'number', label: 'Newmark γ', d: 0.5, step: 0.05, half: true,
+        showIf: (s) => s.runTimeHistory && s.thIntegrator === 'Newmark' },
+      { id: 'newmarkBeta', type: 'number', label: 'Newmark β', d: 0.25, step: 0.05, half: true,
+        showIf: (s) => s.runTimeHistory && s.thIntegrator === 'Newmark' },
+      { id: 'hhtAlpha', type: 'number', label: 'α', d: 0.9, step: 0.05,
+        showIf: (s) => s.runTimeHistory && ['HHT', 'GeneralizedAlpha'].includes(s.thIntegrator) },
+      { id: 'thDt', type: 'number', label: 'Analysis dt [s]', d: 0.005, step: 0.001, half: true,
+        showIf: (s) => s.runTimeHistory },
+      { id: 'thDuration', type: 'number', label: 'Duration [s]', d: 0, step: 1, half: true,
+        showIf: (s) => s.runTimeHistory, hint: '0 uses the full length of the record.' },
+
+      { kind: 'sub', label: 'Damping', showIf: (s) => s.runTimeHistory },
+      { id: 'dampRatio', type: 'number', label: 'Rayleigh damping ratio', d: 0.05, step: 0.005,
+        showIf: (s) => s.runTimeHistory },
+      { id: 'dampModeI', type: 'number', label: 'Anchor mode i', d: 1, min: 1, max: 30, step: 1, half: true,
+        showIf: (s) => s.runTimeHistory },
+      { id: 'dampModeJ', type: 'number', label: 'Anchor mode j', d: 3, min: 1, max: 30, step: 1, half: true,
+        showIf: (s) => s.runTimeHistory },
 
       { kind: 'sub', label: 'Recorders' },
       { id: 'useRecorders', type: 'check', d: true, label: 'Write recorder output' },
@@ -353,6 +388,65 @@ export const SCHEMA = [
 
 function opts(...values) {
   return values.map((v) => ({ value: v, label: v }));
+}
+
+/**
+ * Displacement-controlled lateral loading, shared by the pushover and cyclic
+ * cases. `p` prefixes the state keys so the two cases stay independent.
+ */
+function pushoverFields(shown, p) {
+  return [
+    { id: `${p}Dof`, type: 'select', label: 'Direction', d: '1', showIf: shown, options: [
+      { value: '1', label: 'DOF 1 — global X' },
+      { value: '2', label: 'DOF 2 — global Y' },
+    ]},
+    { id: `${p}Node`, type: 'select', label: 'Control node', d: 'centre', showIf: shown, options: [
+      { value: 'centre', label: 'Roof — nearest plan centre' },
+      { value: 'corner', label: 'Roof — origin corner' },
+    ]},
+    { id: `${p}Shape`, type: 'select', label: 'Lateral load pattern', d: 'triangular', showIf: shown, options: [
+      { value: 'triangular', label: 'Inverted triangular — mass × height' },
+      { value: 'uniform', label: 'Uniform — mass proportional' },
+      { value: 'modal', label: 'First mode — from the eigenvectors' },
+    ]},
+    { id: `${p}Drift`, type: 'number', label: 'Target roof drift ratio', d: 0.02, step: 0.005,
+      half: true, showIf: shown },
+    { id: `${p}Steps`, type: 'number', label: 'Steps to target', d: 200, min: 10, max: 5000, step: 10,
+      half: true, showIf: shown },
+    { kind: 'break' },
+  ];
+}
+
+function modelOptions(models) {
+  return Object.entries(models).map(([value, def]) => ({ value, label: def.label }));
+}
+
+/**
+ * Expands a material catalogue into sidebar fields — one block per model, only
+ * the selected block visible. A row break between models stops a half-width
+ * field of one model pairing up with the next model's first field.
+ */
+function materialFields(family, selectKey, visible) {
+  const out = [];
+  for (const [type, def] of Object.entries(modelsOf(family))) {
+    const shown = (s) => visible(s) && s[selectKey] === type;
+    if (def.note) out.push({ kind: 'note-line', label: def.note, showIf: shown });
+    for (const p of def.params) {
+      out.push({
+        id: matKey(family, type, p.key),
+        type: p.options ? 'select' : 'number',
+        label: p.label,
+        unit: p.unit,
+        d: p.d,
+        step: p.step,
+        options: p.options,
+        half: !p.options && !!p.half,
+        showIf: shown,
+      });
+    }
+    out.push({ kind: 'break' });
+  }
+  return out;
 }
 
 function transfOptions() {

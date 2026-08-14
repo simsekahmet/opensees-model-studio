@@ -8,6 +8,7 @@
 import { SCHEMA } from '../schema.js';
 import { state, setValue, subscribe } from '../state.js';
 import { unitLabel } from '../units.js';
+import { loadRecordFile, subscribeGM, getRecord } from '../model/groundmotion.js';
 
 export function renderForm(root, onDirty) {
   const registry = [];   // { field, wrapper, input, unitEl }
@@ -34,7 +35,11 @@ export function renderForm(root, onDirty) {
     // Pairs of consecutive `half` fields share a row.
     let row = null;
     for (const field of group.fields) {
-      const el = field.kind === 'sub' ? subhead(field) : control(field, registry, onDirty);
+      if (field.kind === 'break') { row = null; continue; }
+
+      const el = field.kind === 'sub' ? subhead(field)
+        : field.kind === 'note-line' ? noteLine(field)
+        : control(field, registry, onDirty);
       if (!el) continue;
 
       if (field.half) {
@@ -95,8 +100,98 @@ function subhead(field) {
   return el;
 }
 
+/** A standalone caveat shown above a material's parameter block. */
+function noteLine(field) {
+  const el = document.createElement('p');
+  el.className = 'field-note';
+  el.textContent = field.label;
+  if (field.showIf) {
+    const update = () => { el.hidden = !field.showIf(state); };
+    subscribe(update);
+    update();
+  }
+  return el;
+}
+
+/**
+ * Ground motion upload. The record itself stays in `model/groundmotion.js`;
+ * only its name lands in the persisted state, and a declared DT in the header
+ * is pushed into the record-dt field so the two cannot disagree.
+ */
+function fileField(field, onDirty) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'field';
+
+  const label = document.createElement('div');
+  label.className = 'field-label';
+  label.textContent = field.label;
+
+  const row = document.createElement('div');
+  row.className = 'file-row';
+
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.id = `f-${field.id}`;
+  input.accept = '.txt,.at2,.AT2,.dat,.acc,text/plain';
+  input.className = 'file-input';
+
+  const button = document.createElement('label');
+  button.className = 'btn btn-ghost btn-sm';
+  button.htmlFor = input.id;
+  button.textContent = 'Choose record…';
+
+  const summary = document.createElement('div');
+  summary.className = 'file-summary';
+
+  input.addEventListener('change', async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    try {
+      const rec = await loadRecordFile(file);
+      setValue(field.id, rec.name);
+      if (rec.dt) setValue('gmDt', rec.dt);
+      onDirty?.();
+    } catch (err) {
+      summary.textContent = err.message;
+      summary.dataset.tone = 'error';
+    }
+  });
+
+  const paint = (rec) => {
+    if (!rec) {
+      summary.textContent = 'No record loaded.';
+      delete summary.dataset.tone;
+      return;
+    }
+    delete summary.dataset.tone;
+    summary.textContent = `${rec.name} — ${rec.npts} points`
+      + (rec.dt ? `, dt ${rec.dt} s, ${(rec.npts * rec.dt).toFixed(1)} s` : '')
+      + `, peak ${rec.pga.toPrecision(4)}  [${rec.source}]`;
+  };
+  subscribeGM(paint);
+  paint(getRecord());
+
+  row.append(button, input);
+  wrapper.append(label, row, summary);
+  if (field.hint) {
+    const hint = document.createElement('div');
+    hint.className = 'field-hint';
+    hint.textContent = field.hint;
+    wrapper.append(hint);
+  }
+
+  // Visibility is driven by the same showIf machinery as every other field.
+  if (field.showIf) {
+    const update = () => { wrapper.hidden = !field.showIf(state); };
+    subscribe(update);
+    update();
+  }
+  return wrapper;
+}
+
 function control(field, registry, onDirty) {
   if (field.type === 'check') return checkbox(field, registry, onDirty);
+  if (field.type === 'file') return fileField(field, onDirty);
 
   const wrapper = document.createElement('div');
   wrapper.className = 'field';

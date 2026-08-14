@@ -7,6 +7,10 @@
  */
 
 import { unitsOf } from '../units.js';
+import {
+  CONCRETE_MODELS, STEEL_MODELS, materialArgs, constName, matKey,
+} from '../model/materials.js';
+import { scriptFileName } from '../model/groundmotion.js';
 
 /* Fixed tag constants, mirrored in the generated script. */
 const T = {
@@ -25,7 +29,7 @@ const ELEMENT_NAME = {
 
 const usesSection = (name) => name === 'forceBeamColumn' || name === 'dispBeamColumn';
 
-export function generateScript(s, model) {
+export function generateScript(s, model, gm = null) {
   const u = unitsOf(s.unitSystem);
   const L = [];
   const w = (...lines) => L.push(...lines);
@@ -89,42 +93,7 @@ export function generateScript(s, model) {
     '',
     `G_ACC = ${pf(s.gravityAccel)}  # gravitational acceleration [${u.accel}]`,
     `RHO   = ${pf(s.density)}  # mass density [${u.massVol}]`,
-    ''
-  );
-
-  w('# Materials');
-  if (!steelSystem) {
-    w(
-      `FC     = ${pf(s.fpc)}  # f'c   [${u.stress}]`,
-      `EPSC0  = ${pf(s.epsc0)}  # strain at f\'c`,
-      `FCU    = ${pf(s.fpcu)}  # residual strength [${u.stress}]`,
-      `EPSU   = ${pf(s.epsU)}  # crushing strain`,
-      `EC     = ${pf(s.Ec)}  # concrete elastic modulus [${u.stress}]`
-    );
-    if (s.concreteMat === 'Concrete02') {
-      w(
-        `FT     = ${pf(s.ft)}  # tensile strength [${u.stress}]`,
-        `ETS    = ${pf(s.Ets)}  # tension softening stiffness`,
-        `LAMBDA = ${pf(s.lambdaC)}  # unloading slope ratio`
-      );
-    }
-    if (fiber) {
-      w(
-        `K_CONF = ${pf(s.confineFactor)}  # core confinement factor`,
-        '',
-        '# Confined core properties — Mander et al. (1988)',
-        'FC_CORE   = FC * K_CONF',
-        'EPS_CORE  = EPSC0 * (1.0 + 5.0 * (K_CONF - 1.0))',
-        'FCU_CORE  = FCU * K_CONF',
-        'EPSU_CORE = EPSU * (1.0 + 5.0 * (K_CONF - 1.0))'
-      );
-    }
-    w('');
-  }
-  w(
-    `FY  = ${pf(s.Fy)}  # yield strength [${u.stress}]`,
-    `ES  = ${pf(s.Es)}  # steel elastic modulus [${u.stress}]`,
-    `NU  = ${pf(s.nu)}  # Poisson ratio`,
+    `NU    = ${pf(s.nu)}  # Poisson ratio`,
     ''
   );
 
@@ -424,49 +393,12 @@ export function generateScript(s, model) {
 
   /* ────────────────────────────── analysis ─────────────────────────── */
   rule('Analysis');
-  if (s.runGravity) {
-    w(
-      '# ── Gravity, applied in N_STEPS equal increments ──',
-      `ops.constraints(${py(s.constraintsCmd)}${s.constraintsCmd === 'Penalty' ? ', 1.0e14, 1.0e14' : ''})`,
-      `ops.numberer(${py(s.numbererCmd)})`,
-      `ops.system(${py(s.systemCmd)})`,
-      `ops.test(${py(s.testCmd)}, TOL, MAX_ITER, 0)`,
-      `ops.algorithm(${py(s.algorithmCmd)})`,
-      "ops.integrator('LoadControl', 1.0 / N_STEPS)",
-      "ops.analysis('Static')",
-      '',
-      'if ops.analyze(N_STEPS) != 0:',
-      "    raise RuntimeError('Gravity analysis failed to converge.')",
-      '',
-      "print(f'Gravity analysis complete: {len(ops.getNodeTags())} nodes, {len(ops.getEleTags())} elements.')",
-      '',
-      '# Hold the gravity state and restart the pseudo-time for what follows.',
-      "ops.loadConst('-time', 0.0)",
-      ''
-    );
-  }
-
-  if (s.runModal) {
-    w(
-      '# ── Eigenvalue analysis ──',
-      `eigenvalues = ops.eigen(${py(s.eigenSolver)}, N_MODES)`,
-      'periods = [2.0 * math.pi / math.sqrt(lam) for lam in eigenvalues]',
-      '',
-      "print('\\nMode      Period        Frequency')",
-      "print('-' * 38)",
-      'for n, period in enumerate(periods, start=1):',
-      "    print(f'{n:>4}   {period:>10.4f} s   {1.0 / period:>8.4f} Hz')",
-      ''
-    );
-    if (s.useRecorders) {
-      w(
-        'with open(os.path.join(OUT_DIR, \'periods.out\'), \'w\') as handle:',
-        '    for n, period in enumerate(periods, start=1):',
-        "        handle.write(f'{n} {period:.6f}\\n')",
-        ''
-      );
-    }
-  }
+  emitSolutionStrategy(w, s);
+  if (s.runGravity) emitGravity(w, s);
+  if (s.runModal) emitModal(w, s);
+  if (s.runPushover) emitLateral(w, s, model, 'push', false);
+  if (s.runCyclic) emitLateral(w, s, model, 'cyc', true);
+  if (s.runTimeHistory) emitTimeHistory(w, s, model, gm);
 
   w(
     'ops.wipe()',
@@ -474,6 +406,238 @@ export function generateScript(s, model) {
   );
 
   return alignComments(L).join('\n');
+}
+
+/* ═══════════════════════════════ analyses ═══════════════════════════ */
+
+/** The solver stack, set once and reused by every case below. */
+function emitSolutionStrategy(w, s) {
+  const extra = s.constraintsCmd === 'Penalty' ? ', PENALTY_A, PENALTY_A'
+    : s.constraintsCmd === 'Lagrange' ? ', LAGRANGE_A, LAGRANGE_A' : '';
+
+  w('# Solver stack — shared by every case below.');
+  if (s.constraintsCmd === 'Penalty') w(`PENALTY_A = ${pf(s.penaltyAlpha)}`);
+  if (s.constraintsCmd === 'Lagrange') w(`LAGRANGE_A = ${pf(s.lagrangeAlpha)}`);
+  w(
+    'def set_solver():',
+    `    ops.constraints(${py(s.constraintsCmd)}${extra})`,
+    `    ops.numberer(${py(s.numbererCmd)})`,
+    `    ops.system(${py(s.systemCmd)})`,
+    `    ops.test(${py(s.testCmd)}, TOL, MAX_ITER, 0)`,
+    `    ops.algorithm(${py(s.algorithmCmd)})`,
+    '',
+    ''
+  );
+}
+
+function emitGravity(w, s) {
+  const integ = {
+    LoadControl: "ops.integrator('LoadControl', 1.0 / N_STEPS)",
+    DisplacementControl: "ops.integrator('LoadControl', 1.0 / N_STEPS)  # gravity is load driven",
+    ParallelDisplacementControl: "ops.integrator('LoadControl', 1.0 / N_STEPS)  # gravity is load driven",
+    MinUnbalDispNorm: "ops.integrator('MinUnbalDispNorm', 1.0 / N_STEPS)",
+    ArcLength: `ops.integrator('ArcLength', ${pf(s.arcLength)}, ${pf(s.arcAlpha)})`,
+  }[s.gravityIntegrator] || "ops.integrator('LoadControl', 1.0 / N_STEPS)";
+
+  w(
+    '# ── Gravity ──────────────────────────────────────────────────────────',
+    'set_solver()',
+    integ,
+    "ops.analysis('Static')",
+    '',
+    'if ops.analyze(N_STEPS) != 0:',
+    "    raise RuntimeError('Gravity analysis failed to converge.')",
+    '',
+    "print(f'Gravity complete: {len(ops.getNodeTags())} nodes, {len(ops.getEleTags())} elements.')",
+    '',
+    '# Hold the gravity state and restart the pseudo-time for what follows.',
+    "ops.loadConst('-time', 0.0)",
+    ''
+  );
+}
+
+function emitModal(w, s) {
+  w(
+    '# ── Modal ────────────────────────────────────────────────────────────',
+    `eigenvalues = ops.eigen(${py(s.eigenSolver)}, N_MODES)`,
+    'periods = [2.0 * math.pi / math.sqrt(lam) for lam in eigenvalues]',
+    '',
+    "print('\\nMode      Period        Frequency')",
+    "print('-' * 38)",
+    'for n, period in enumerate(periods, start=1):',
+    "    print(f'{n:>4}   {period:>10.4f} s   {1.0 / period:>8.4f} Hz')",
+    ''
+  );
+  if (s.useRecorders) {
+    w(
+      "with open(os.path.join(OUT_DIR, 'periods.out'), 'w') as handle:",
+      '    for n, period in enumerate(periods, start=1):',
+      "        handle.write(f'{n} {period:.6f}\\n')",
+      ''
+    );
+  }
+}
+
+/**
+ * Pushover and cyclic share their lateral load pattern and control node; only
+ * the displacement schedule differs, so they are emitted from one routine.
+ */
+function emitLateral(w, s, model, p, cyclic) {
+  const title = cyclic ? 'Cyclic' : 'Pushover';
+  const tag = cyclic ? 4 : 3;
+  const dof = s[`${p}Dof`];
+  const shape = s[`${p}Shape`];
+  const centre = s[`${p}Node`] === 'centre';
+  const P = p.toUpperCase();
+
+  w(
+    `# ── ${title} ${'─'.repeat(68 - title.length)}`,
+    `${P}_DOF    = ${pi(dof)}`,
+    `${P}_DRIFT  = ${pf(s[`${p}Drift`])}  # of the total building height`,
+    `${P}_STEPS  = ${pi(s[`${p}Steps`])}`,
+    `${P}_NODE   = node_tag(N_Z, ${centre ? 'NX_N // 2, NY_N // 2' : '0, 0'})`,
+    `${P}_TARGET = ${P}_DRIFT * Z[-1]`,
+    ''
+  );
+
+  // Lateral load pattern.
+  w(`# Lateral pattern — ${shape}`);
+  if (shape === 'modal') {
+    w(
+      `if not ops.eigen('-genBandArpack', 1):`,
+      `    raise RuntimeError('The first mode is needed for a modal load pattern.')`
+    );
+  }
+  w(
+    `ops.timeSeries('Linear', ${tag})`,
+    `ops.pattern('Plain', ${tag}, ${tag})`,
+    'for level in range(1, N_Z + 1):',
+    '    for j in range(NY_N):',
+    '        for i in range(NX_N):',
+    '            tag = node_tag(level, i, j)',
+    '            m = ops.nodeMass(tag, 1)',
+    shape === 'triangular' ? '            f = m * Z[level]'
+      : shape === 'uniform' ? '            f = m'
+      : `            f = m * ops.nodeEigenvector(tag, 1, ${P}_DOF)`,
+    `            load = [0.0] * 6`,
+    `            load[${P}_DOF - 1] = f`,
+    '            ops.load(tag, *load)',
+    '',
+    'set_solver()',
+    "ops.analysis('Static')",
+    ''
+  );
+
+  if (!cyclic) {
+    w(
+      `ops.integrator('DisplacementControl', ${P}_NODE, ${P}_DOF, ${P}_TARGET / ${P}_STEPS)`,
+      `if ops.analyze(${P}_STEPS) != 0:`,
+      `    print('Pushover stopped early — the model lost convergence.')`,
+      `print(f'Pushover roof displacement: {ops.nodeDisp(${P}_NODE, ${P}_DOF):.4f}')`,
+      ''
+    );
+    return;
+  }
+
+  w(
+    `${P}_AMPS    = [${expandCsv(s.cycAmplitudes).map(pf).join(', ')}]  # drift ratios`,
+    `${P}_REPEATS = ${pi(s.cycRepeats)}`,
+    '',
+    '',
+    'def push_to(node, dof, target, steps):',
+    '    """Displacement-controls `node` from where it is to `target`."""',
+    '    current = ops.nodeDisp(node, dof)',
+    '    incr = (target - current) / steps',
+    '    if incr == 0.0:',
+    '        return True',
+    "    ops.integrator('DisplacementControl', node, dof, incr)",
+    '    return ops.analyze(steps) == 0',
+    '',
+    '',
+    `for amp in ${P}_AMPS:`,
+    `    peak = amp * Z[-1]`,
+    `    for _ in range(${P}_REPEATS):`,
+    `        for target in (peak, -peak, 0.0):`,
+    `            if not push_to(${P}_NODE, ${P}_DOF, target, ${P}_STEPS):`,
+    `                print(f'Cyclic analysis stopped at drift {amp}.')`,
+    '                break',
+    '        else:',
+    '            continue',
+    '        break',
+    '    else:',
+    '        continue',
+    '    break',
+    ''
+  );
+}
+
+function emitTimeHistory(w, s, model, gm) {
+  const file = gm ? scriptFileName(gm) : 'ground_motion.txt';
+  const npts = gm ? gm.npts : 0;
+  const steps = s.thDuration > 0
+    ? `int(${pf(s.thDuration)} / TH_DT)`
+    : (gm ? `int(${pf(npts)} * GM_DT / TH_DT)` : 'TH_STEPS');
+
+  w(
+    '# ── Time history ─────────────────────────────────────────────────────',
+    `GM_FILE  = ${py(file)}  # one acceleration per line, next to this script`,
+    `GM_DT    = ${pf(s.gmDt)}  # time step of the record [s]`,
+    `GM_SCALE = ${pf(s.gmScale)}  # multiplied by g, so a record in g needs no conversion`,
+    `GM_DOF   = ${pi(s.gmDir)}`,
+    `TH_DT    = ${pf(s.thDt)}  # integration time step [s]`,
+    gm ? `GM_NPTS  = ${pi(npts)}` : 'TH_STEPS = 2000',
+    '',
+    'if not os.path.exists(GM_FILE):',
+    "    raise FileNotFoundError(f'Ground motion file {GM_FILE!r} was not found.')",
+    '',
+    '# Rayleigh damping anchored on two modes.',
+    `DAMP_RATIO = ${pf(s.dampRatio)}`,
+    `MODE_I, MODE_J = ${pi(s.dampModeI)}, ${pi(s.dampModeJ)}`,
+    'lambdas = ops.eigen(\'-genBandArpack\', max(MODE_I, MODE_J))',
+    'w_i = math.sqrt(lambdas[MODE_I - 1])',
+    'w_j = math.sqrt(lambdas[MODE_J - 1])',
+    'a0 = 2.0 * DAMP_RATIO * w_i * w_j / (w_i + w_j)',
+    'a1 = 2.0 * DAMP_RATIO / (w_i + w_j)',
+    'ops.rayleigh(a0, 0.0, 0.0, a1)',
+    '',
+    "ops.timeSeries('Path', 5, '-dt', GM_DT, '-filePath', GM_FILE, '-factor', GM_SCALE * G_ACC)",
+    "ops.pattern('UniformExcitation', 5, GM_DOF, '-accel', 5)",
+    '',
+    'set_solver()',
+    transientIntegrator(s),
+    "ops.analysis('Transient')",
+    '',
+    `n_steps = ${steps}`,
+    'if ops.analyze(n_steps, TH_DT) != 0:',
+    "    print('Time history stopped early — the model lost convergence.')",
+    "print(f'Time history complete: {n_steps} steps of {TH_DT} s.')",
+    ''
+  );
+}
+
+function transientIntegrator(s) {
+  switch (s.thIntegrator) {
+    case 'Newmark':
+      return `ops.integrator('Newmark', ${pf(s.newmarkGamma)}, ${pf(s.newmarkBeta)})`;
+    case 'HHT':
+      return `ops.integrator('HHT', ${pf(s.hhtAlpha)})`;
+    case 'GeneralizedAlpha':
+      return `ops.integrator('GeneralizedAlpha', ${pf(s.hhtAlpha)}, ${pf(Math.min(1, Number(s.hhtAlpha) + 0.05))})`;
+    case 'TRBDF2':
+      return "ops.integrator('TRBDF2')";
+    case 'CentralDifference':
+      return "ops.integrator('CentralDifference')";
+    case 'ExplicitDifference':
+      return "ops.integrator('ExplicitDifference')";
+    default:
+      return "ops.integrator('Newmark', 0.5, 0.25)";
+  }
+}
+
+/** "0.005, 0.01" → [0.005, 0.01] */
+function expandCsv(text) {
+  const out = String(text ?? '').split(/[,;\s]+/).map(Number).filter((n) => Number.isFinite(n) && n > 0);
+  return out.length ? out : [0.01];
 }
 
 /* ───────────────────────── section constants ────────────────────────── */
@@ -504,51 +668,42 @@ function emitSectionConsts(w, prefix, sec, u, fiber) {
 
 function emitMaterials(w, s, fiber, steelSystem) {
   if (!steelSystem) {
-    const m = s.concreteMat;
-    const core = fiber ? ['FC_CORE', 'EPS_CORE', 'FCU_CORE', 'EPSU_CORE'] : ['FC', 'EPSC0', 'FCU', 'EPSU'];
+    const type = s.concreteMat;
+    const def = CONCRETE_MODELS[type];
+    const confined = fiber && !!def.confine;
 
-    w('# Concrete — tag 1 is the confined core, tag 2 the unconfined cover.');
-    if (m === 'Elastic') {
-      w(`ops.uniaxialMaterial('Elastic', ${T.matCore}, EC)`);
-      w(`ops.uniaxialMaterial('Elastic', ${T.matCover}, EC)`);
-    } else if (m === 'Concrete01') {
-      w(`ops.uniaxialMaterial('Concrete01', ${T.matCore}, ${core.join(', ')})`);
-      w(`ops.uniaxialMaterial('Concrete01', ${T.matCover}, FC, EPSC0, FCU, EPSU)`);
-    } else if (m === 'Concrete02') {
-      w(`ops.uniaxialMaterial('Concrete02', ${T.matCore}, ${core.join(', ')}, LAMBDA, FT, ETS)`);
-      w(`ops.uniaxialMaterial('Concrete02', ${T.matCover}, FC, EPSC0, FCU, EPSU, LAMBDA, FT, ETS)`);
-    } else if (m === 'Concrete04') {
-      w(`ops.uniaxialMaterial('Concrete04', ${T.matCore}, ${fiber ? 'FC_CORE, EPS_CORE, EPSU_CORE' : 'FC, EPSC0, EPSU'}, EC)`);
-      w(`ops.uniaxialMaterial('Concrete04', ${T.matCover}, FC, EPSC0, EPSU, EC)`);
+    w(`# Concrete — ${def.label}`);
+    emitMaterialConstants(w, def, 'conc', type, s);
+
+    if (confined) {
+      w(
+        `K_CONF  = ${pf(s.confineFactor)}  # core strength enhancement`,
+        'KE_CONF = 1.0 + 5.0 * (K_CONF - 1.0)  # core strain enhancement, Mander et al. (1988)',
+        ''
+      );
     }
+
+    w(`ops.uniaxialMaterial('${type}', ${T.matCover}, ${materialArgs(def, 'conc').join(', ')})  # unconfined cover`);
+    w(`ops.uniaxialMaterial('${type}', ${T.matCore}, ${materialArgs(def, 'conc', { core: confined }).join(', ')})`
+      + `  # ${confined ? 'confined core' : 'core, same as cover'}`);
     w('');
   }
 
-  w(`# ${steelSystem ? 'Structural steel' : 'Reinforcement'} — tag 3`);
-  switch (s.steelMat) {
-    case 'Elastic':
-      w(`ops.uniaxialMaterial('Elastic', ${T.matSteel}, ES)`);
-      break;
-    case 'ElasticPP':
-      w(`ops.uniaxialMaterial('ElasticPP', ${T.matSteel}, ES, FY / ES)`);
-      break;
-    case 'Steel01':
-      w(`ops.uniaxialMaterial('Steel01', ${T.matSteel}, FY, ES, ${pf(s.bHard)})`);
-      break;
-    case 'Steel02':
-      w(`ops.uniaxialMaterial('Steel02', ${T.matSteel}, FY, ES, ${pf(s.bHard)}, ${pf(s.R0)}, ${pf(s.cR1)}, ${pf(s.cR2)})`);
-      break;
-    case 'Hysteretic':
-      w(
-        'EPS_Y = FY / ES',
-        `ops.uniaxialMaterial('Hysteretic', ${T.matSteel},`,
-        '                     FY, EPS_Y, 1.25 * FY, 0.02, 0.2 * FY, 0.10,',
-        '                     -FY, -EPS_Y, -1.25 * FY, -0.02, -0.2 * FY, -0.10,',
-        `                     ${pf(s.pinchX)}, ${pf(s.pinchY)}, ${pf(s.damage1)}, ${pf(s.damage2)}, ${pf(s.betaH)})`
-      );
-      break;
-    default:
-      break;
+  const stype = s.steelMat;
+  const sdef = STEEL_MODELS[stype];
+  w(`# ${steelSystem ? 'Structural steel' : 'Reinforcement'} — ${sdef.label}`);
+  emitMaterialConstants(w, sdef, 'steel', stype, s);
+  w(`ops.uniaxialMaterial('${stype}', ${T.matSteel}, ${materialArgs(sdef, 'steel').join(', ')})`);
+  w('');
+}
+
+/** Named constants for one material, so the call below stays readable. */
+function emitMaterialConstants(w, def, family, type, s) {
+  const width = Math.max(...def.params.map((p) => constName(family, p.key).length));
+  for (const p of def.params) {
+    const value = s[matKey(family, type, p.key)];
+    const literal = p.options ? py(value) : pf(value);
+    w(`${constName(family, p.key).padEnd(width)} = ${literal}  # ${p.label}`);
   }
   w('');
 }
@@ -664,8 +819,10 @@ function alignComments(lines) {
   let block = [];
 
   const flush = () => {
-    if (block.length > 1) {
-      const col = Math.max(...block.map((b) => b.code.length)) + 2;
+    const col = Math.max(...block.map((b) => b.code.length)) + 2;
+    // Long statements are left alone; padding them would push the comment far
+    // off to the right and hurt the readability alignment is meant to buy.
+    if (block.length > 1 && col <= 62) {
       for (const b of block) out[b.idx] = b.code.padEnd(col) + b.comment;
     }
     block = [];
