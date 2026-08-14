@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>OpenSees Model Studio</title>
+<meta name="description" content="A visual model builder for OpenSeesPy — define a frame, compile it, and inspect the 3D model, plans, sections and the generated Python script." />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230f766e'/><path d='M8 24V8h4v16zm12 0V8h4v16zM8 15h16v2H8z' fill='white'/></svg>" />
+<link rel="stylesheet" href="css/theme.css" />
+<link rel="stylesheet" href="css/app.css" />
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+
+<!-- ───────────────────────────── Top bar ───────────────────────────── -->
+<header class="topbar">
+  <div class="brand">
+    <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+      <rect width="32" height="32" rx="7" fill="currentColor" opacity=".14"/>
+      <path d="M9 24V9h3v15zm11 0V9h3v15zM9 15.5h14v2H9z" fill="currentColor"/>
+    </svg>
+    <div class="brand-text">
+      <span class="brand-title">OpenSees Model Studio</span>
+      <span class="brand-sub">OpenSeesPy model builder &amp; viewer</span>
+    </div>
+  </div>
+
+  <div class="topbar-status" id="build-status" data-tone="idle">
+    <span class="dot"></span><span id="build-status-text">Not compiled</span>
+  </div>
+
+  <div class="topbar-actions">
+    <button class="btn btn-ghost" id="btn-reset" title="Restore all inputs to defaults">Reset</button>
+    <button class="btn btn-ghost" id="btn-download" title="Download the generated OpenSeesPy script">Download .py</button>
+    <button class="btn btn-icon" id="btn-theme" title="Toggle light / dark" aria-label="Toggle colour theme">
+      <svg class="icon-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+      <svg class="icon-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"/></svg>
+    </button>
+    <button class="btn btn-primary" id="btn-compile" title="Build the model (Ctrl+Enter)">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4l14 8-14 8z"/></svg>
+      Compile
+    </button>
+  </div>
+</header>
+
+<main class="workspace">
+
+  <!-- ───────────────────────── Parameter sidebar ───────────────────────── -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-head">
+      <h2>Model definition</h2>
+      <button class="linkbtn" id="btn-collapse-all">Collapse all</button>
+    </div>
+    <div class="sidebar-scroll" id="form-root"><!-- rendered from js/schema.js --></div>
+    <div class="sidebar-foot">
+      <span id="form-summary">—</span>
+    </div>
+  </aside>
+
+  <!-- ──────────────────────────── Viewport ──────────────────────────── -->
+  <section class="viewport">
+
+    <nav class="tabs" role="tablist">
+      <button class="tab is-active" role="tab" data-tab="view3d">3D Model</button>
+      <button class="tab" role="tab" data-tab="plan">Plan</button>
+      <button class="tab" role="tab" data-tab="elevation">Elevation</button>
+      <button class="tab" role="tab" data-tab="sections">Sections</button>
+      <button class="tab" role="tab" data-tab="data">Model Data</button>
+      <button class="tab" role="tab" data-tab="code">Python Code</button>
+    </nav>
+
+    <!-- Scene panel: shared by the 3D / Plan / Elevation tabs -->
+    <div class="panel is-active" id="panel-scene">
+      <div class="scene-toolbar">
+        <div class="seg" role="group" aria-label="Display mode">
+          <button class="seg-btn is-active" data-display="wireframe">Stick</button>
+          <button class="seg-btn" data-display="extruded">Extruded</button>
+        </div>
+
+        <div class="toolbar-group" id="story-picker" hidden>
+          <label for="sel-story">Story</label>
+          <select id="sel-story" class="mini-select"></select>
+        </div>
+
+        <div class="toolbar-group" id="frame-picker" hidden>
+          <label for="sel-frame">Frame</label>
+          <select id="sel-frame" class="mini-select"></select>
+        </div>
+
+        <div class="toolbar-group toggles">
+          <label class="chip"><input type="checkbox" id="tg-nodes" checked><span>Node labels</span></label>
+          <label class="chip"><input type="checkbox" id="tg-elements" checked><span>Element labels</span></label>
+          <label class="chip"><input type="checkbox" id="tg-dims"><span>Dimensions</span></label>
+          <label class="chip"><input type="checkbox" id="tg-grid" checked><span>Grid</span></label>
+          <label class="chip"><input type="checkbox" id="tg-supports" checked><span>Supports</span></label>
+        </div>
+
+        <button class="btn btn-ghost btn-sm" id="btn-fit" title="Fit model to view">Fit</button>
+      </div>
+
+      <div class="scene-host" id="scene-host">
+        <div id="scene-canvas"></div>
+        <div id="scene-labels" class="label-layer"></div>
+        <div class="scene-empty" id="scene-empty">
+          <div>
+            <h3>No model yet</h3>
+            <p>Set your parameters on the left, then press <kbd>Compile</kbd>.</p>
+          </div>
+        </div>
+        <div class="scene-legend" id="scene-legend">
+          <span><i class="sw sw-col"></i>Column</span>
+          <span><i class="sw sw-bx"></i>Beam · X</span>
+          <span><i class="sw sw-by"></i>Beam · Y</span>
+        </div>
+        <aside class="inspector" id="inspector" hidden>
+          <header>
+            <strong id="inspector-title">Selection</strong>
+            <button class="linkbtn" id="inspector-close">Close</button>
+          </header>
+          <div class="inspector-body" id="inspector-body"></div>
+        </aside>
+      </div>
+    </div>
+
+    <!-- Sections tab -->
+    <div class="panel" id="panel-sections">
+      <div class="doc-scroll" id="sections-root"></div>
+    </div>
+
+    <!-- Model data tab -->
+    <div class="panel" id="panel-data">
+      <div class="doc-scroll" id="data-root"></div>
+    </div>
+
+    <!-- Generated code tab -->
+    <div class="panel" id="panel-code">
+      <div class="code-head">
+        <span id="code-meta">Compile the model to generate the script.</span>
+        <div class="code-actions">
+          <button class="btn btn-ghost btn-sm" id="btn-copy">Copy</button>
+          <button class="btn btn-ghost btn-sm" id="btn-download-2">Download .py</button>
+        </div>
+      </div>
+      <pre class="code-block"><code id="code-out">#  The generated OpenSeesPy script will appear here.</code></pre>
+    </div>
+
+  </section>
+</main>
+
+<div class="toaster" id="toaster" aria-live="polite"></div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
