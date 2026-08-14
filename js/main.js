@@ -9,7 +9,7 @@
 import { state, resetAll } from './state.js';
 import { renderForm } from './ui/form.js';
 import { initTheme, initTabs, toast, setStatus, downloadText, slug } from './ui/shell.js';
-import { renderSections, renderData, renderInspector } from './ui/reports.js';
+import { renderSections, renderData, renderInspector, renderSelectionSummary } from './ui/reports.js';
 import { buildModel } from './model/builder.js';
 import { generateScript } from './codegen/openseespy.js';
 import { createViewer } from './viewer/viewer.js';
@@ -27,6 +27,9 @@ const dom = {
   framePicker: el('frame-picker'),
   selStory: el('sel-story'),
   selFrame: el('sel-frame'),
+  band: el('rubber-band'),
+  selectInfo: el('select-info'),
+  viewMenu: el('view-menu'),
   inspector: el('inspector'),
   inspectorTitle: el('inspector-title'),
   inspectorBody: el('inspector-body'),
@@ -49,13 +52,13 @@ initTheme(el('btn-theme'), () => {
 initTabs(onTabChange);
 
 const viewer = createViewer(dom.sceneCanvas, dom.sceneLabels, {
-  onSelect: (element) => renderInspector(dom.inspector, dom.inspectorTitle, dom.inspectorBody, element, state),
+  band: dom.band,
+  onSelect: showSelection,
 });
 
 renderForm(dom.formRoot, markStale);
 
 el('btn-compile').addEventListener('click', compile);
-el('btn-fit').addEventListener('click', () => viewer.fit());
 el('btn-copy').addEventListener('click', copyScript);
 el('btn-download').addEventListener('click', download);
 el('btn-download-2').addEventListener('click', download);
@@ -70,11 +73,13 @@ el('btn-reset').addEventListener('click', () => {
   compile();
 });
 
-el('btn-collapse-all').addEventListener('click', (ev) => {
+const collapseAll = el('btn-collapse-all');
+collapseAll.textContent = 'Expand all';
+collapseAll.addEventListener('click', () => {
   const groups = [...dom.formRoot.querySelectorAll('.group')];
   const collapse = groups.some((g) => !g.classList.contains('is-collapsed'));
   for (const g of groups) g.classList.toggle('is-collapsed', collapse);
-  ev.target.textContent = collapse ? 'Expand all' : 'Collapse all';
+  collapseAll.textContent = collapse ? 'Expand all' : 'Collapse all';
 });
 
 /* Display mode */
@@ -85,17 +90,32 @@ for (const btn of document.querySelectorAll('.seg-btn')) {
   });
 }
 
-/* Scene toggles */
+/* View options — one menu holds every overlay toggle */
 const TOGGLES = {
   'tg-nodes': 'nodeLabels',
   'tg-elements': 'elemLabels',
+  'tg-local': 'localAxes',
   'tg-dims': 'dims',
   'tg-grid': 'grid',
   'tg-supports': 'supports',
+  'tg-axes': 'axes',
 };
 for (const [id, key] of Object.entries(TOGGLES)) {
   el(id).addEventListener('change', (ev) => viewer.setOptions({ [key]: ev.target.checked }));
 }
+
+const viewMenuBtn = el('btn-view-menu');
+viewMenuBtn.addEventListener('click', (ev) => {
+  ev.stopPropagation();
+  const open = dom.viewMenu.hidden;
+  dom.viewMenu.hidden = !open;
+  viewMenuBtn.setAttribute('aria-expanded', String(open));
+});
+document.addEventListener('click', (ev) => {
+  if (dom.viewMenu.hidden || dom.viewMenu.contains(ev.target)) return;
+  dom.viewMenu.hidden = true;
+  viewMenuBtn.setAttribute('aria-expanded', 'false');
+});
 
 dom.selStory.addEventListener('change', () => viewer.setOptions({ story: Number(dom.selStory.value) }));
 dom.selFrame.addEventListener('change', () => {
@@ -105,6 +125,7 @@ dom.selFrame.addEventListener('change', () => {
 
 window.addEventListener('keydown', (ev) => {
   if ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter') { ev.preventDefault(); compile(); }
+  if (ev.key === 'Escape') viewer.clearSelection();
 });
 
 compile();
@@ -131,11 +152,10 @@ function compile() {
   }
 
   model = next;
-  dom.inspector.hidden = true;
   dom.sceneEmpty.classList.add('is-hidden');
 
-  viewer.clearSelection();
   viewer.setModel(model);
+  showSelection([]);
 
   populatePickers();
   refreshPanels();
@@ -165,6 +185,19 @@ function refreshPanels() {
 
 function markStale() {
   if (model) setStatus('Modified — press Compile', 'stale');
+}
+
+/** Mirrors the viewer's selection into the toolbar counter and the inspector. */
+function showSelection(elements) {
+  const n = elements.length;
+  dom.selectInfo.textContent = n === 0
+    ? 'No selection'
+    : n === 1 ? `1 element selected` : `${n} elements selected`;
+  dom.selectInfo.classList.toggle('has-selection', n > 0);
+
+  if (n === 0) { dom.inspector.hidden = true; return; }
+  if (n === 1) renderInspector(dom.inspector, dom.inspectorTitle, dom.inspectorBody, elements[0], state);
+  else renderSelectionSummary(dom.inspector, dom.inspectorTitle, dom.inspectorBody, elements, state);
 }
 
 /* ──────────────────────────── view controls ─────────────────────────── */

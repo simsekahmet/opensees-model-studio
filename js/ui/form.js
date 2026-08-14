@@ -9,31 +9,24 @@ import { SCHEMA } from '../schema.js';
 import { state, setValue, subscribe } from '../state.js';
 import { unitLabel } from '../units.js';
 
-const COLLAPSE_KEY = 'osms.collapsed';
-
 export function renderForm(root, onDirty) {
-  const collapsed = new Set(JSON.parse(localStorage.getItem(COLLAPSE_KEY) || '[]'));
   const registry = [];   // { field, wrapper, input, unitEl }
 
   root.textContent = '';
 
   for (const group of SCHEMA) {
+    // Every group starts closed, so the sidebar always opens as a short index
+    // of the model rather than a wall of inputs.
     const section = document.createElement('section');
-    section.className = 'group';
+    section.className = 'group is-collapsed';
     section.dataset.group = group.id;
-    if (collapsed.has(group.id)) section.classList.add('is-collapsed');
 
     const head = document.createElement('button');
     head.type = 'button';
     head.className = 'group-head';
-    head.innerHTML = `<span class="caret"></span><span class="g-title"></span><span class="g-note"></span>`;
+    head.innerHTML = '<span class="caret"></span><span class="g-title"></span>';
     head.querySelector('.g-title').textContent = group.title;
-    head.querySelector('.g-note').textContent = group.note || '';
-    head.addEventListener('click', () => {
-      section.classList.toggle('is-collapsed');
-      const now = [...root.querySelectorAll('.group.is-collapsed')].map((g) => g.dataset.group);
-      localStorage.setItem(COLLAPSE_KEY, JSON.stringify(now));
-    });
+    head.addEventListener('click', () => section.classList.toggle('is-collapsed'));
 
     const body = document.createElement('div');
     body.className = 'group-body';

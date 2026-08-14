@@ -29,7 +29,7 @@ export const SCHEMA = [
 
   /* ══════════════════════════════════════════════════════ Project ══════ */
   {
-    id: 'project', title: 'Project & Units', note: 'ndm 3 · ndf 6',
+    id: 'project', title: 'Project & Units',
     fields: [
       { id: 'projectName', type: 'text', label: 'Model name', d: 'Frame Model' },
       {
@@ -45,7 +45,7 @@ export const SCHEMA = [
 
   /* ═════════════════════════════════════════════════════ Geometry ══════ */
   {
-    id: 'geometry', title: 'Geometry', note: 'grid',
+    id: 'geometry', title: 'Geometry',
     fields: [
       { id: 'baysX', type: 'number', label: 'Bays along X', d: 3, min: 1, max: 30, step: 1, half: true },
       { id: 'baysY', type: 'number', label: 'Bays along Y', d: 2, min: 1, max: 30, step: 1, half: true },
@@ -63,7 +63,7 @@ export const SCHEMA = [
 
   /* ════════════════════════════════════════════════════ Materials ══════ */
   {
-    id: 'materials', title: 'Materials', note: 'uniaxialMaterial',
+    id: 'materials', title: 'Materials',
     fields: [
       { id: 'matSystem', type: 'select', label: 'Structural system', d: 'rc', options: [
         { value: 'rc',    label: 'Reinforced concrete' },
@@ -132,7 +132,7 @@ export const SCHEMA = [
 
   /* ═════════════════════════════════════════════════════ Sections ══════ */
   {
-    id: 'sections', title: 'Sections', note: 'section',
+    id: 'sections', title: 'Sections',
     fields: [
       { id: 'sectionKind', type: 'select', label: 'Section formulation', d: 'Elastic', options: [
         { value: 'Elastic', label: 'Elastic — section(\'Elastic\', …)' },
@@ -219,7 +219,7 @@ export const SCHEMA = [
 
   /* ═════════════════════════════════════════════════════ Elements ══════ */
   {
-    id: 'elements', title: 'Elements', note: 'element · geomTransf',
+    id: 'elements', title: 'Elements',
     fields: [
       { id: 'colElement', type: 'select', label: 'Column element', d: 'forceBeamColumn', options: [
         { value: 'elasticBeamColumn',    label: 'elasticBeamColumn' },
@@ -260,7 +260,7 @@ export const SCHEMA = [
 
   /* ══════════════════════════════════════════ Supports & constraints ══ */
   {
-    id: 'supports', title: 'Supports & Constraints', note: 'fix · rigidDiaphragm',
+    id: 'supports', title: 'Supports & Constraints',
     fields: [
       { id: 'baseFixity', type: 'select', label: 'Base restraint', d: 'Fixed', options: [
         { value: 'Fixed',  label: 'Fixed — 1 1 1 1 1 1' },
@@ -279,7 +279,7 @@ export const SCHEMA = [
 
   /* ═════════════════════════════════════════════════ Loads & mass ══════ */
   {
-    id: 'loads', title: 'Loads & Mass', note: 'pattern · eleLoad · mass',
+    id: 'loads', title: 'Loads & Mass',
     fields: [
       { id: 'deadFloor', type: 'number', label: 'Floor dead load', unit: 'areaLoad', half: true,
         d: { 'kN-m': 4.5, 'N-mm': 4.5e-3, 'kip-in': 6.5e-4 } },
@@ -311,7 +311,7 @@ export const SCHEMA = [
 
   /* ═════════════════════════════════════════════════════ Analysis ══════ */
   {
-    id: 'analysis', title: 'Analysis', note: 'analyze',
+    id: 'analysis', title: 'Analysis',
     fields: [
       { id: 'runGravity', type: 'check', d: true, label: 'Run gravity analysis' },
       { id: 'gravitySteps', type: 'number', label: 'Load steps', d: 10, min: 1, max: 500, step: 1,

@@ -1,12 +1,16 @@
 /**
  * viewer/viewer.js — the WebGL model viewer.
  *
- * Draws the model built by `model/builder.js` as either stick elements or
- * extruded solids, and drives the 3D, plan and elevation cameras.  The scene
+ * Draws the model built by `model/builder.js` as either frame (stick) elements
+ * or extruded solids, and drives the 3D, plan and elevation cameras.  The scene
  * is rebuilt whenever the visible subset changes, which keeps the instance
  * buffers dense and selection indices trivial to map back to elements.
  *
- * Global axes match the model: X and Y horizontal, Z vertical.
+ * Global axes match the model and the generated script: X and Y horizontal,
+ * Z vertical, origin at the first base grid point.
+ *
+ * Navigation follows ETABS: left button draws a selection window, the middle
+ * button pans, Shift + middle orbits, and the wheel zooms.
  */
 
 import * as THREE from 'three';
@@ -19,15 +23,23 @@ import { fmt } from '../units.js';
 /** Above these counts the labels would be unreadable anyway, so they are cut. */
 const MAX_NODE_LABELS = 400;
 const MAX_ELEM_LABELS = 500;
+const MAX_LOCAL_AXES = 2000;
 
-/** Section-local axes expressed in world coordinates, per element family. */
+/** Pointer travel below this is a click, not a drag. */
+const DRAG_THRESHOLD = 4;
+
+/**
+ * Section-local axes expressed in world coordinates, per element family.
+ * These are the same triads the `geomTransf` vecxz values produce in the
+ * generated script, so the local-axis display is not a separate convention.
+ */
 const BASIS = {
   column: [new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, -1, 0), new THREE.Vector3(1, 0, 0)],
   beamX:  [new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, -1, 0)],
   beamY:  [new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 1), new THREE.Vector3(1, 0, 0)],
 };
 
-export function createViewer(host, labelHost, { onSelect } = {}) {
+export function createViewer(host, labelHost, { onSelect, band } = {}) {
   /* ── renderers ────────────────────────────────────────────────────── */
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -49,6 +61,9 @@ export function createViewer(host, labelHost, { onSelect } = {}) {
   const controls = new OrbitControls(perspective, renderer.domElement);
   controls.enableDamping = true;
   controls.dampingFactor = 0.09;
+  // Left is reserved for selection. OrbitControls swaps PAN and ROTATE when a
+  // modifier is held, which gives the ETABS mapping for free.
+  controls.mouseButtons = { LEFT: null, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.ROTATE };
 
   scene.add(new THREE.AmbientLight(0xffffff, 0.72));
   const key = new THREE.DirectionalLight(0xffffff, 1.05);
@@ -67,13 +82,18 @@ export function createViewer(host, labelHost, { onSelect } = {}) {
   const gSupports = new THREE.Group();
   const gGrid = new THREE.Group();
   const gDims = new THREE.Group();
+  const gLocal = new THREE.Group();
+  const gAxes = new THREE.Group();
   const gLabels = new THREE.Group();
   const gSelection = new THREE.Group();
-  root.add(gElements, gNodes, gSupports, gGrid, gDims, gLabels, gSelection);
+  root.add(gElements, gNodes, gSupports, gGrid, gDims, gLocal, gAxes, gLabels, gSelection);
 
   /* ── state ────────────────────────────────────────────────────────── */
   let model = null;
-  let picks = [];          // per drawable: { object, elements }
+  let picks = [];          // per drawable: { object, elements, mode }
+  let visibleElements = [];
+  const selection = new Set();
+
   const opts = {
     display: 'wireframe',
     view: 'view3d',
@@ -81,19 +101,21 @@ export function createViewer(host, labelHost, { onSelect } = {}) {
     frame: { axis: 'x', index: 0 },
     nodeLabels: true,
     elemLabels: true,
+    localAxes: false,
     dims: false,
     grid: true,
     supports: true,
+    axes: true,
   };
 
   const raycaster = new THREE.Raycaster();
   const pointer = new THREE.Vector2();
-  let selectedTag = null;
 
   /* ── public API ───────────────────────────────────────────────────── */
 
   function setModel(next) {
     model = next;
+    selection.clear();
     opts.story = Math.min(opts.story, model.grid.nz) || 1;
     rebuild();
     applyCamera();
@@ -137,6 +159,16 @@ export function createViewer(host, labelHost, { onSelect } = {}) {
     controls.update();
   }
 
+  function clearSelection() {
+    selection.clear();
+    drawSelection();
+    onSelect?.([]);
+  }
+
+  function getSelection() {
+    return [...selection].map((tag) => model?.elementByTag.get(tag)).filter(Boolean);
+  }
+
   function dispose() {
     resizeObserver.disconnect();
     renderer.dispose();
@@ -146,27 +178,28 @@ export function createViewer(host, labelHost, { onSelect } = {}) {
   /* ── scene construction ───────────────────────────────────────────── */
 
   function rebuild() {
-    clear(gElements); clear(gNodes); clear(gSupports);
-    clear(gGrid); clear(gDims); clear(gLabels); clear(gSelection);
+    for (const g of [gElements, gNodes, gSupports, gGrid, gDims, gLocal, gAxes, gLabels, gSelection]) clear(g);
     picks = [];
     if (!model) return;
 
-    const visible = model.elements.filter(elementVisible);
+    visibleElements = model.elements.filter(elementVisible);
     const nodeTags = new Set();
-    for (const e of visible) { nodeTags.add(e.ni); nodeTags.add(e.nj); }
+    for (const e of visibleElements) { nodeTags.add(e.ni); nodeTags.add(e.nj); }
     const nodes = model.nodes.filter((n) => nodeTags.has(n.tag) || (n.master && opts.view === 'view3d'));
 
     const scale = Math.max(Math.hypot(...model.bounds.max), 1e-3);
 
-    if (opts.display === 'extruded') buildExtruded(visible);
-    else buildWireframe(visible);
+    if (opts.display === 'extruded') buildExtruded(visibleElements);
+    else buildWireframe(visibleElements);
 
     buildNodes(nodes, scale);
     if (opts.supports) buildSupports(scale);
     if (opts.grid) buildGrid();
     if (opts.dims) buildDimensions();
-    buildLabels(visible, nodes);
-    if (selectedTag) highlight(selectedTag);
+    if (opts.localAxes) buildLocalAxes(visibleElements, scale);
+    if (opts.axes) buildGlobalAxes(scale);
+    buildLabels(visibleElements, nodes);
+    drawSelection();
   }
 
   function elementVisible(e) {
@@ -179,7 +212,7 @@ export function createViewer(host, labelHost, { onSelect } = {}) {
     return true;
   }
 
-  /* ---- stick display ---- */
+  /* ---- frame display ---- */
 
   function buildWireframe(elements) {
     for (const kind of ['column', 'beamX', 'beamY']) {
@@ -196,7 +229,6 @@ export function createViewer(host, labelHost, { onSelect } = {}) {
       geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
       const mat = new THREE.LineBasicMaterial({ color: new THREE.Color(colorOf(kind)) });
       const lines = new THREE.LineSegments(geom, mat);
-      lines.userData.kind = kind;
       gElements.add(lines);
       picks.push({ object: lines, elements: list, mode: 'line' });
     }
@@ -248,8 +280,7 @@ export function createViewer(host, labelHost, { onSelect } = {}) {
       return g;
     }
     if (sec.shape === 'ISection') {
-      const shape = iShape(sec);
-      const g = new THREE.ExtrudeGeometry(shape, { depth: 1, bevelEnabled: false });
+      const g = new THREE.ExtrudeGeometry(iShape(sec), { depth: 1, bevelEnabled: false });
       g.translate(0, 0, -0.5);
       g.rotateY(Math.PI / 2);
       return g;
@@ -258,8 +289,7 @@ export function createViewer(host, labelHost, { onSelect } = {}) {
   }
 
   function iShape(sec) {
-    const { h, bf, tf, tw } = { h: sec.h, bf: sec.bf, tf: sec.tf, tw: sec.tw };
-    const hz = bf / 2, hy = h / 2, hw = tw / 2, yf = h / 2 - tf;
+    const hz = sec.bf / 2, hy = sec.h / 2, hw = sec.tw / 2, yf = sec.h / 2 - sec.tf;
     const s = new THREE.Shape();
     s.moveTo(-hz, -hy); s.lineTo(hz, -hy); s.lineTo(hz, -yf);
     s.lineTo(hw, -yf);  s.lineTo(hw, yf);  s.lineTo(hz, yf);
@@ -273,8 +303,7 @@ export function createViewer(host, labelHost, { onSelect } = {}) {
 
   function buildNodes(nodes, scale) {
     if (!nodes.length) return;
-    const r = scale * 0.004;
-    const geom = new THREE.SphereGeometry(r, 10, 8);
+    const geom = new THREE.SphereGeometry(scale * 0.004, 10, 8);
     const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(themeColor('--el-node')) });
     const mesh = new THREE.InstancedMesh(geom, mat, nodes.length);
     mesh.frustumCulled = false;
@@ -323,6 +352,59 @@ export function createViewer(host, labelHost, { onSelect } = {}) {
     gGrid.add(new THREE.LineSegments(geom, mat));
   }
 
+  /* ---- coordinate axes ---- */
+
+  /** Global triad at the model origin, matching the script's node (0, 0, 0). */
+  function buildGlobalAxes(scale) {
+    const len = scale * 0.17;
+    const origin = new THREE.Vector3(0, 0, 0);
+    const dirs = [
+      [new THREE.Vector3(1, 0, 0), '--axis-x', 'X'],
+      [new THREE.Vector3(0, 1, 0), '--axis-y', 'Y'],
+      [new THREE.Vector3(0, 0, 1), '--axis-z', 'Z'],
+    ];
+    for (const [dir, token, label] of dirs) {
+      gAxes.add(new THREE.ArrowHelper(
+        dir, origin, len, new THREE.Color(themeColor(token)), len * 0.22, len * 0.11
+      ));
+      addTag(gAxes, label,
+        dir.x * len * 1.2, dir.y * len * 1.2, dir.z * len * 1.2,
+        `tag-axis ax-${label.toLowerCase()}`);
+    }
+  }
+
+  /**
+   * Element local axes drawn at each midpoint: x along the member, y along the
+   * section depth, z along the section width — the triad the section
+   * properties and the eleLoad signs are expressed in.
+   */
+  function buildLocalAxes(elements, scale) {
+    if (elements.length > MAX_LOCAL_AXES) return;
+
+    const colors = ['--axis-x', '--axis-y', '--axis-z'].map((t) => new THREE.Color(themeColor(t)));
+    const pts = [];
+    const cols = [];
+
+    for (const e of elements) {
+      const mid = [
+        (e.p1[0] + e.p2[0]) / 2,
+        (e.p1[1] + e.p2[1]) / 2,
+        (e.p1[2] + e.p2[2]) / 2,
+      ];
+      const len = Math.min(e.length * 0.25, scale * 0.035);
+      BASIS[e.kind].forEach((axis, i) => {
+        pts.push(mid[0], mid[1], mid[2]);
+        pts.push(mid[0] + axis.x * len, mid[1] + axis.y * len, mid[2] + axis.z * len);
+        cols.push(colors[i].r, colors[i].g, colors[i].b, colors[i].r, colors[i].g, colors[i].b);
+      });
+    }
+
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+    geom.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
+    gLocal.add(new THREE.LineSegments(geom, new THREE.LineBasicMaterial({ vertexColors: true })));
+  }
+
   /* ---- dimensions ---- */
 
   function buildDimensions() {
@@ -330,14 +412,13 @@ export function createViewer(host, labelHost, { onSelect } = {}) {
     const span = Math.max(xs[xs.length - 1], ys[ys.length - 1]);
     const off = span * 0.06;
     const pts = [];
-    const color = new THREE.Color(themeColor('--el-dim'));
 
     // Bay widths along X, drawn below the footprint.
     const yDim = -off;
     for (let i = 0; i < xs.length - 1; i++) {
       pts.push(xs[i], yDim, 0, xs[i + 1], yDim, 0);
       pts.push(xs[i], 0, 0, xs[i], yDim * 1.25, 0);
-      addTag(`${fmt(xs[i + 1] - xs[i], 2)}`, (xs[i] + xs[i + 1]) / 2, yDim * 1.35, 0, 'tag-dim');
+      addTag(gDims, fmt(xs[i + 1] - xs[i], 2), (xs[i] + xs[i + 1]) / 2, yDim * 1.35, 0, 'tag-dim');
     }
     pts.push(xs[xs.length - 1], 0, 0, xs[xs.length - 1], yDim * 1.25, 0);
 
@@ -346,46 +427,47 @@ export function createViewer(host, labelHost, { onSelect } = {}) {
     for (let j = 0; j < ys.length - 1; j++) {
       pts.push(xDim, ys[j], 0, xDim, ys[j + 1], 0);
       pts.push(0, ys[j], 0, xDim * 1.25, ys[j], 0);
-      addTag(`${fmt(ys[j + 1] - ys[j], 2)}`, xDim * 1.35, (ys[j] + ys[j + 1]) / 2, 0, 'tag-dim');
+      addTag(gDims, fmt(ys[j + 1] - ys[j], 2), xDim * 1.35, (ys[j] + ys[j + 1]) / 2, 0, 'tag-dim');
     }
     pts.push(0, ys[ys.length - 1], 0, xDim * 1.25, ys[ys.length - 1], 0);
 
     // Story heights, drawn on the near corner.
     if (opts.view !== 'plan') {
-      const xv = xDim, yv = yDim;
       for (let k = 0; k < zs.length - 1; k++) {
-        pts.push(xv, yv, zs[k], xv, yv, zs[k + 1]);
-        addTag(`${fmt(zs[k + 1] - zs[k], 2)}`, xv, yv, (zs[k] + zs[k + 1]) / 2, 'tag-dim');
+        pts.push(xDim, yDim, zs[k], xDim, yDim, zs[k + 1]);
+        addTag(gDims, fmt(zs[k + 1] - zs[k], 2), xDim, yDim, (zs[k] + zs[k + 1]) / 2, 'tag-dim');
       }
-      addTag(`H = ${fmt(zs[zs.length - 1], 2)}`, xv, yv, zs[zs.length - 1] * 1.03, 'tag-dim');
+      addTag(gDims, `H = ${fmt(zs[zs.length - 1], 2)}`, xDim, yDim, zs[zs.length - 1] * 1.03, 'tag-dim');
     }
 
     const geom = new THREE.BufferGeometry();
     geom.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
-    gDims.add(new THREE.LineSegments(geom, new THREE.LineBasicMaterial({ color })));
+    gDims.add(new THREE.LineSegments(geom, new THREE.LineBasicMaterial({
+      color: new THREE.Color(themeColor('--el-dim')),
+    })));
   }
 
   /* ---- labels ---- */
 
   function buildLabels(elements, nodes) {
     if (opts.nodeLabels && nodes.length <= MAX_NODE_LABELS) {
-      for (const n of nodes) addTag(String(n.tag), n.x, n.y, n.z, 'tag-node');
+      for (const n of nodes) addTag(gLabels, String(n.tag), n.x, n.y, n.z, 'tag-node');
     }
     if (opts.elemLabels && elements.length <= MAX_ELEM_LABELS) {
       for (const e of elements) {
-        addTag(String(e.tag),
+        addTag(gLabels, String(e.tag),
           (e.p1[0] + e.p2[0]) / 2, (e.p1[1] + e.p2[1]) / 2, (e.p1[2] + e.p2[2]) / 2, 'tag-elem');
       }
     }
   }
 
-  function addTag(text, x, y, z, cls) {
+  function addTag(group, text, x, y, z, cls) {
     const div = document.createElement('div');
     div.className = `tag ${cls}`;
     div.textContent = text;
     const obj = new CSS2DObject(div);
     obj.position.set(x, y, z);
-    (cls === 'tag-dim' ? gDims : gLabels).add(obj);
+    group.add(obj);
   }
 
   /* ── cameras ──────────────────────────────────────────────────────── */
@@ -435,11 +517,65 @@ export function createViewer(host, labelHost, { onSelect } = {}) {
 
   /* ── selection ────────────────────────────────────────────────────── */
 
+  let drag = null;
+
   renderer.domElement.addEventListener('pointerdown', (ev) => {
-    if (!model) return;
+    if (ev.button !== 0 || !model) return;
     const rect = renderer.domElement.getBoundingClientRect();
-    pointer.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
-    pointer.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
+    drag = {
+      x0: ev.clientX - rect.left,
+      y0: ev.clientY - rect.top,
+      x1: ev.clientX - rect.left,
+      y1: ev.clientY - rect.top,
+      additive: ev.ctrlKey || ev.metaKey || ev.shiftKey,
+      moved: false,
+      rect,
+    };
+    renderer.domElement.setPointerCapture(ev.pointerId);
+  });
+
+  renderer.domElement.addEventListener('pointermove', (ev) => {
+    if (!drag) return;
+    drag.x1 = ev.clientX - drag.rect.left;
+    drag.y1 = ev.clientY - drag.rect.top;
+    if (!drag.moved && Math.hypot(drag.x1 - drag.x0, drag.y1 - drag.y0) > DRAG_THRESHOLD) drag.moved = true;
+    if (drag.moved) showBand();
+  });
+
+  renderer.domElement.addEventListener('pointerup', (ev) => {
+    if (!drag) return;
+    renderer.domElement.releasePointerCapture?.(ev.pointerId);
+    hideBand();
+
+    if (drag.moved) boxSelect();
+    else clickSelect();
+
+    drag = null;
+    drawSelection();
+    onSelect?.(getSelection());
+  });
+
+  renderer.domElement.addEventListener('pointercancel', () => { hideBand(); drag = null; });
+
+  function showBand() {
+    if (!band) return;
+    const left = Math.min(drag.x0, drag.x1);
+    const top = Math.min(drag.y0, drag.y1);
+    band.hidden = false;
+    band.dataset.mode = drag.x1 >= drag.x0 ? 'window' : 'crossing';
+    band.style.left = `${left}px`;
+    band.style.top = `${top}px`;
+    band.style.width = `${Math.abs(drag.x1 - drag.x0)}px`;
+    band.style.height = `${Math.abs(drag.y1 - drag.y0)}px`;
+  }
+
+  function hideBand() {
+    if (band) band.hidden = true;
+  }
+
+  function clickSelect() {
+    pointer.x = (drag.x1 / drag.rect.width) * 2 - 1;
+    pointer.y = -(drag.y1 / drag.rect.height) * 2 + 1;
     raycaster.setFromCamera(pointer, camera);
     raycaster.params.Line.threshold = Math.hypot(...model.bounds.max) * 0.006;
 
@@ -449,36 +585,86 @@ export function createViewer(host, labelHost, { onSelect } = {}) {
       const hit = hits[0];
       const index = pick.mode === 'instance' ? hit.instanceId : Math.floor(hit.index / 2);
       const element = pick.elements[index];
-      if (element) {
-        selectedTag = element.tag;
-        clear(gSelection);
-        highlight(element.tag);
-        onSelect?.(element);
-        return;
-      }
-    }
-    selectedTag = null;
-    clear(gSelection);
-    onSelect?.(null);
-  });
+      if (!element) continue;
 
-  function highlight(tag) {
-    const e = model.elementByTag.get(tag);
-    if (!e) return;
-    const geom = new THREE.BufferGeometry();
-    geom.setAttribute('position', new THREE.Float32BufferAttribute([...e.p1, ...e.p2], 3));
-    const mat = new THREE.LineBasicMaterial({
-      color: new THREE.Color(themeColor('--accent')),
-      depthTest: false,
-    });
-    const line = new THREE.LineSegments(geom, mat);
-    line.renderOrder = 999;
-    gSelection.add(line);
+      if (!drag.additive) selection.clear();
+      if (selection.has(element.tag)) selection.delete(element.tag);
+      else selection.add(element.tag);
+      return;
+    }
+    if (!drag.additive) selection.clear();
   }
 
-  function clearSelection() {
-    selectedTag = null;
+  /**
+   * ETABS window/crossing rule: dragging left-to-right selects only members
+   * fully inside the box; dragging right-to-left also takes anything the box
+   * merely touches.
+   */
+  function boxSelect() {
+    const crossing = drag.x1 < drag.x0;
+    const box = {
+      x0: Math.min(drag.x0, drag.x1), x1: Math.max(drag.x0, drag.x1),
+      y0: Math.min(drag.y0, drag.y1), y1: Math.max(drag.y0, drag.y1),
+    };
+    const w = drag.rect.width, h = drag.rect.height;
+    if (!drag.additive) selection.clear();
+
+    for (const e of visibleElements) {
+      const a = toScreen(e.p1, w, h);
+      const b = toScreen(e.p2, w, h);
+      if (!a || !b) continue;
+      const inA = inBox(a, box), inB = inBox(b, box);
+      const hit = crossing
+        ? (inA || inB || segmentCrossesBox(a, b, box))
+        : (inA && inB);
+      if (hit) selection.add(e.tag);
+    }
+  }
+
+  const projected = new THREE.Vector3();
+
+  function toScreen(p, w, h) {
+    projected.set(p[0], p[1], p[2]).project(camera);
+    if (projected.z < -1 || projected.z > 1) return null;   // behind or beyond
+    return { x: (projected.x * 0.5 + 0.5) * w, y: (-projected.y * 0.5 + 0.5) * h };
+  }
+
+  const inBox = (p, b) => p.x >= b.x0 && p.x <= b.x1 && p.y >= b.y0 && p.y <= b.y1;
+
+  /** Liang–Barsky: does the segment a→b intersect the axis-aligned box? */
+  function segmentCrossesBox(a, b, box) {
+    const dx = b.x - a.x, dy = b.y - a.y;
+    let t0 = 0, t1 = 1;
+    const clip = (p, q) => {
+      if (p === 0) return q >= 0;
+      const r = q / p;
+      if (p < 0) { if (r > t1) return false; if (r > t0) t0 = r; }
+      else { if (r < t0) return false; if (r < t1) t1 = r; }
+      return true;
+    };
+    return clip(-dx, a.x - box.x0) && clip(dx, box.x1 - a.x)
+        && clip(-dy, a.y - box.y0) && clip(dy, box.y1 - a.y);
+  }
+
+  function drawSelection() {
     clear(gSelection);
+    if (!model || !selection.size) return;
+
+    const pts = [];
+    for (const tag of selection) {
+      const e = model.elementByTag.get(tag);
+      if (e) pts.push(...e.p1, ...e.p2);
+    }
+    if (!pts.length) return;
+
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+    const line = new THREE.LineSegments(geom, new THREE.LineBasicMaterial({
+      color: new THREE.Color(themeColor('--el-select')),
+      depthTest: false,
+    }));
+    line.renderOrder = 999;
+    gSelection.add(line);
   }
 
   /* ── loop and resize ──────────────────────────────────────────────── */
@@ -507,12 +693,12 @@ export function createViewer(host, labelHost, { onSelect } = {}) {
   resize();
   tick();
 
-  return { setModel, setOptions, fit, refreshTheme, clearSelection, dispose };
+  return { setModel, setOptions, fit, refreshTheme, clearSelection, getSelection, dispose };
 
   /* ── small helpers ────────────────────────────────────────────────── */
 
   function colorOf(kind) {
-    return themeColor({ column: '--el-column', beamX: '--el-beam-x', beamY: '--el-beam-y' }[kind]);
+    return themeColor(kind === 'column' ? '--el-column' : '--el-beam');
   }
 
   function clear(group) {
@@ -521,6 +707,7 @@ export function createViewer(host, labelHost, { onSelect } = {}) {
       child.geometry?.dispose?.();
       child.material?.dispose?.();
       if (child instanceof CSS2DObject) child.element.remove();
+      if (child.dispose && child.isObject3D && child.line) child.dispose();   // ArrowHelper
       group.remove(child);
     }
   }

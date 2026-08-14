@@ -331,13 +331,53 @@ export function renderInspector(panel, titleEl, bodyEl, element, s) {
   }
   bodyEl.append(dl);
   panel.hidden = false;
+}
 
-  function sep() {
-    const d = document.createElement('div');
-    d.className = 'kv-sep';
-    d.style.gridColumn = '1 / -1';
-    return d;
+/** Aggregate card shown when a selection window catches more than one member. */
+export function renderSelectionSummary(panel, titleEl, bodyEl, elements, s) {
+  const u = unitsOf(s.unitSystem);
+  const byKind = { column: 0, beamX: 0, beamY: 0 };
+  const stories = new Set();
+  let length = 0;
+  let load = 0;
+
+  for (const e of elements) {
+    byKind[e.kind]++;
+    stories.add(e.story);
+    length += e.length;
+    load += (e.w + (e.wSelf || 0)) * e.length;
   }
+
+  titleEl.textContent = `${elements.length} elements selected`;
+  bodyEl.textContent = '';
+
+  const rows = [
+    ['Columns', String(byKind.column)],
+    ['Beams — X', String(byKind.beamX)],
+    ['Beams — Y', String(byKind.beamY)],
+    null,
+    ['Stories', [...stories].sort((a, b) => a - b).join(', ')],
+    ['Total length', `${fmt(length, 2)} ${u.length}`],
+    ['Total load', `${fmt(load, 2)} ${u.force}`],
+  ];
+
+  const dl = document.createElement('dl');
+  dl.className = 'kv';
+  for (const row of rows) {
+    if (!row) { dl.append(sep()); continue; }
+    const dt = document.createElement('dt'); dt.textContent = row[0];
+    const dd = document.createElement('dd'); dd.textContent = row[1];
+    dl.append(dt, dd);
+  }
+  bodyEl.append(dl);
+  panel.hidden = false;
+}
+
+function sep() {
+  const d = document.createElement('div');
+  d.className = 'kv-sep';
+  d.style.gridColumn = '1 / -1';
+  return d;
 }
 
 /* ═════════════════════════════════ helpers ══════════════════════════ */

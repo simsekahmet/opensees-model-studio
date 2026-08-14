@@ -33,11 +33,16 @@
 
   /* Structural element colours, shared by the 3D viewer and the legend */
   --el-column:   #f0b429;
-  --el-beam-x:   #5aa9f0;
-  --el-beam-y:   #c58af9;
+  --el-beam:     #5aa9f0;
   --el-node:     #e6edf5;
   --el-support:  #3ecf8e;
   --el-dim:      #8ba0b8;
+  --el-select:   #2dd4bf;
+
+  /* Coordinate axes — global triad and element local axes */
+  --axis-x:      #ff5f56;
+  --axis-y:      #4ad46a;
+  --axis-z:      #4aa3ff;
 
   --shadow-1: 0 1px 2px rgba(0,0,0,.35);
   --shadow-2: 0 8px 26px rgba(0,0,0,.42);
@@ -78,11 +83,15 @@ html[data-theme="light"] {
   --info:        #1f6fb2;
 
   --el-column:   #c07f00;
-  --el-beam-x:   #1f6fb2;
-  --el-beam-y:   #7b47c9;
+  --el-beam:     #1f6fb2;
   --el-node:     #14202c;
   --el-support:  #17875a;
   --el-dim:      #5c6f85;
+  --el-select:   #0f766e;
+
+  --axis-x:      #d43b32;
+  --axis-y:      #1f9142;
+  --axis-z:      #1f6fb2;
 
   --shadow-1: 0 1px 2px rgba(20,32,44,.10);
   --shadow-2: 0 10px 28px rgba(20,32,44,.14);

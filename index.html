@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>OpenSees Model Studio</title>
 <meta name="description" content="A visual model builder for OpenSeesPy — define a frame, compile it, and inspect the 3D model, plans, sections and the generated Python script." />
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230f766e'/><path d='M8 24V8h4v16zm12 0V8h4v16zM8 15h16v2H8z' fill='white'/></svg>" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230f766e'/><g fill='white'><rect x='5' y='6.5' width='22' height='3.4' rx='.6'/><rect x='7.6' y='9.9' width='3.4' height='15.2'/><rect x='21' y='9.9' width='3.4' height='15.2'/><rect x='3.5' y='25.1' width='25' height='1.8' rx='.6'/></g></svg>" />
 <link rel="stylesheet" href="css/theme.css" />
 <link rel="stylesheet" href="css/app.css" />
 <script type="importmap">
@@ -23,8 +23,13 @@
 <header class="topbar">
   <div class="brand">
     <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
-      <rect width="32" height="32" rx="7" fill="currentColor" opacity=".14"/>
-      <path d="M9 24V9h3v15zm11 0V9h3v15zM9 15.5h14v2H9z" fill="currentColor"/>
+      <rect width="32" height="32" rx="7" fill="currentColor" opacity=".13"/>
+      <g fill="currentColor">
+        <rect x="5" y="6.5" width="22" height="3.4" rx=".6"/>
+        <rect x="7.6" y="9.9" width="3.4" height="15.2"/>
+        <rect x="21" y="9.9" width="3.4" height="15.2"/>
+        <rect x="3.5" y="25.1" width="25" height="1.8" rx=".6"/>
+      </g>
     </svg>
     <div class="brand-text">
       <span class="brand-title">OpenSees Model Studio</span>
@@ -37,6 +42,7 @@
   </div>
 
   <div class="topbar-actions">
+    <span class="credit">Developed by <b>Ahmet Şimşek</b></span>
     <button class="btn btn-ghost" id="btn-reset" title="Restore all inputs to defaults">Reset</button>
     <button class="btn btn-ghost" id="btn-download" title="Download the generated OpenSeesPy script">Download .py</button>
     <button class="btn btn-icon" id="btn-theme" title="Toggle light / dark" aria-label="Toggle colour theme">
@@ -60,7 +66,11 @@
     </div>
     <div class="sidebar-scroll" id="form-root"><!-- rendered from js/schema.js --></div>
     <div class="sidebar-foot">
-      <span id="form-summary">—</span>
+      <div class="foot-summary" id="form-summary">—</div>
+      <p class="foot-warning">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l9.5 16.5h-19L12 3z"/><path d="M12 10v4.2M12 16.6v.2"/></svg>
+        <span><b>Warning:</b> Engineering results must be reviewed and approved by the responsible structural engineer.</span>
+      </p>
     </div>
   </aside>
 
@@ -80,8 +90,26 @@
     <div class="panel is-active" id="panel-scene">
       <div class="scene-toolbar">
         <div class="seg" role="group" aria-label="Display mode">
-          <button class="seg-btn is-active" data-display="wireframe">Stick</button>
+          <button class="seg-btn is-active" data-display="wireframe">Frame</button>
           <button class="seg-btn" data-display="extruded">Extruded</button>
+        </div>
+
+        <div class="menu-wrap">
+          <button class="btn btn-ghost btn-sm" id="btn-view-menu" aria-expanded="false">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+            View options
+            <span class="caret-sm"></span>
+          </button>
+          <div class="menu-pop" id="view-menu" hidden>
+            <p class="menu-head">Show in view</p>
+            <label class="menu-item"><input type="checkbox" id="tg-nodes" checked><span>Node labels</span></label>
+            <label class="menu-item"><input type="checkbox" id="tg-elements" checked><span>Element labels</span></label>
+            <label class="menu-item"><input type="checkbox" id="tg-local"><span>Local axes</span></label>
+            <label class="menu-item"><input type="checkbox" id="tg-dims"><span>Dimensions</span></label>
+            <label class="menu-item"><input type="checkbox" id="tg-grid" checked><span>Grid</span></label>
+            <label class="menu-item"><input type="checkbox" id="tg-supports" checked><span>Supports</span></label>
+            <label class="menu-item"><input type="checkbox" id="tg-axes" checked><span>Global axes</span></label>
+          </div>
         </div>
 
         <div class="toolbar-group" id="story-picker" hidden>
@@ -94,20 +122,14 @@
           <select id="sel-frame" class="mini-select"></select>
         </div>
 
-        <div class="toolbar-group toggles">
-          <label class="chip"><input type="checkbox" id="tg-nodes" checked><span>Node labels</span></label>
-          <label class="chip"><input type="checkbox" id="tg-elements" checked><span>Element labels</span></label>
-          <label class="chip"><input type="checkbox" id="tg-dims"><span>Dimensions</span></label>
-          <label class="chip"><input type="checkbox" id="tg-grid" checked><span>Grid</span></label>
-          <label class="chip"><input type="checkbox" id="tg-supports" checked><span>Supports</span></label>
-        </div>
-
-        <button class="btn btn-ghost btn-sm" id="btn-fit" title="Fit model to view">Fit</button>
+        <div class="toolbar-spacer"></div>
+        <div class="select-info" id="select-info">No selection</div>
       </div>
 
       <div class="scene-host" id="scene-host">
         <div id="scene-canvas"></div>
         <div id="scene-labels" class="label-layer"></div>
+        <div class="rubber-band" id="rubber-band" hidden></div>
         <div class="scene-empty" id="scene-empty">
           <div>
             <h3>No model yet</h3>
@@ -116,8 +138,8 @@
         </div>
         <div class="scene-legend" id="scene-legend">
           <span><i class="sw sw-col"></i>Column</span>
-          <span><i class="sw sw-bx"></i>Beam · X</span>
-          <span><i class="sw sw-by"></i>Beam · Y</span>
+          <span><i class="sw sw-beam"></i>Beam</span>
+          <span class="legend-hint">Drag ▸ window select · Drag ◂ crossing select · Middle drag pan · Shift + middle orbit</span>
         </div>
         <aside class="inspector" id="inspector" hidden>
           <header>
