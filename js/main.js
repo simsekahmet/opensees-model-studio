@@ -165,6 +165,8 @@ function compile() {
   refreshPanels();
 
   const s = model.stats;
+  el('legend-iso').hidden = !s.isolators;
+  el('legend-damp').hidden = !s.dampers;
   setStatus(`Compiled · ${s.nodes} nodes · ${s.elements} elements`, 'ok');
   dom.formSummary.textContent =
     `${model.grid.nz} stories · ${model.grid.nx}×${model.grid.ny} bays · ${s.dof} DOF`;

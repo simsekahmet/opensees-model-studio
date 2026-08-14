@@ -11,6 +11,9 @@ import {
   CONCRETE_MODELS, STEEL_MODELS, materialArgs, constName, matKey,
 } from '../model/materials.js';
 import { scriptFileName } from '../model/groundmotion.js';
+import {
+  ISOLATOR_TYPES, DAMPER_TYPES, FRICTION_MODELS, devKey, devConst,
+} from '../model/devices.js';
 
 /* Fixed tag constants, mirrored in the generated script. */
 const T = {
@@ -44,6 +47,9 @@ export function generateScript(s, model, gm = null) {
   const { column, beamX, beamY, shared } = model.sections;
   const fiber = s.sectionKind === 'Fiber';
   const steelSystem = s.matSystem === 'steel';
+  const isolated = !!s.useIsolation;
+  const chevron = !!s.useDampers && s.damperConfig === 'chevron';
+  const isoH = isolated ? Number(s.isolatorHeight) || 0 : 0;
 
   /* ─────────────────────────────── header ──────────────────────────── */
   w(
@@ -94,6 +100,7 @@ export function generateScript(s, model, gm = null) {
     `G_ACC = ${pf(s.gravityAccel)}  # gravitational acceleration [${u.accel}]`,
     `RHO   = ${pf(s.density)}  # mass density [${u.massVol}]`,
     `NU    = ${pf(s.nu)}  # Poisson ratio`,
+    ...(isolated ? [`ISO_H = ${pf(isoH)}  # bearing height [${u.length}]`] : []),
     ''
   );
 
@@ -143,7 +150,9 @@ export function generateScript(s, model, gm = null) {
     '',
     'X = cumulative(BAY_X)',
     'Y = cumulative(BAY_Y)',
-    'Z = cumulative(STORY_H)',
+    isolated
+      ? 'Z = [z + ISO_H for z in cumulative(STORY_H)]  # lifted by the bearing height'
+      : 'Z = cumulative(STORY_H)',
     '',
     '',
     'def node_tag(level, i, j):',
@@ -168,6 +177,32 @@ export function generateScript(s, model, gm = null) {
     '    return 300000 + level * 1000 + j * NX_N + i + 1',
     ''
   );
+  if (s.useIsolation) {
+    w(
+      '',
+      'def foundation_tag(i, j):',
+      '    """Node under a bearing, numbered below the grid."""',
+      '    return j * NX_N + i + 1',
+      '',
+      '',
+      'def isolator_tag(i, j):',
+      '    return 400000 + j * NX_N + i + 1',
+      ''
+    );
+  }
+  if (chevron) {
+    w(
+      '',
+      'def mid_x_tag(level, i, j):',
+      '    """Midspan node of an X beam split by a chevron."""',
+      '    return (level + 1) * 10000 + 5000 + j * N_X + i + 1',
+      '',
+      '',
+      'def mid_y_tag(level, i, j):',
+      '    return (level + 1) * 10000 + 7000 + j * NX_N + i + 1',
+      ''
+    );
+  }
 
   /* ─────────────────────────────── model ───────────────────────────── */
   rule('3 — Model space, nodes and restraints');
@@ -183,7 +218,25 @@ export function generateScript(s, model, gm = null) {
   );
 
   const fix = { Fixed: '1, 1, 1, 1, 1, 1', Pinned: '1, 1, 1, 0, 0, 0', Roller: '0, 0, 1, 0, 0, 0' }[s.baseFixity];
-  if (fix) {
+
+  if (isolated) {
+    w(
+      '# Foundation nodes: the restraint sits below the bearings, and only the',
+      '# column bases that carry one are lifted off the ground.',
+      `HAS_BEARING = ${isolatorPredicate(s.isolatorPlacement)}`,
+      '',
+      'for j in range(NY_N):',
+      '    for i in range(NX_N):',
+      '        if HAS_BEARING(i, j):',
+      '            ops.node(foundation_tag(i, j), X[i], Y[j], 0.0)',
+      `            ops.fix(foundation_tag(i, j), ${fix || '1, 1, 1, 1, 1, 1'})`,
+      ...(fix ? [
+        '        else:',
+        `            ops.fix(node_tag(0, i, j), ${fix})`,
+      ] : []),
+      ''
+    );
+  } else if (fix) {
     w(
       `# Base restraint — ${s.baseFixity.toLowerCase()}`,
       'for j in range(NY_N):',
@@ -263,22 +316,66 @@ export function generateScript(s, model, gm = null) {
     '        for i in range(NX_N):',
     '            ops.element(' + elementArgs(s, 'column', 'col_tag(story, i, j)',
       'node_tag(story, i, j)', 'node_tag(story + 1, i, j)', 'COL', T.transfCol, T.intCol) + ')',
-    '',
-    '# Beams spanning X',
-    'for level in range(1, N_Z + 1):',
-    '    for j in range(NY_N):',
-    '        for i in range(N_X):',
-    '            ops.element(' + elementArgs(s, 'beamX', 'beam_x_tag(level, i, j)',
-      'node_tag(level, i, j)', 'node_tag(level, i + 1, j)', 'BX', T.transfBeamX, T.intBeamX) + ')',
-    '',
-    '# Beams spanning Y',
-    'for level in range(1, N_Z + 1):',
-    '    for j in range(N_Y):',
-    '        for i in range(NX_N):',
-    '            ops.element(' + elementArgs(s, 'beamY', 'beam_y_tag(level, i, j)',
-      'node_tag(level, i, j)', 'node_tag(level, i, j + 1)', shared ? 'BX' : 'BY', T.transfBeamY, T.intBeamY) + ')',
     ''
   );
+
+  if (chevron) {
+    const splitX = model.elements.filter((e) => e.kind === 'beamX' && e.splitSibling);
+    const splitY = model.elements.filter((e) => e.kind === 'beamY' && e.splitSibling);
+    w(
+      '# Beams. Those carrying a chevron are split at midspan into two elements.',
+      `CHEVRON_X = {${splitX.map((e) => `(${e.story}, ${e.i}, ${e.j})`).join(', ') || ''}}`,
+      `CHEVRON_Y = {${splitY.map((e) => `(${e.story}, ${e.i}, ${e.j})`).join(', ') || ''}}`,
+      '',
+      'for level in range(1, N_Z + 1):',
+      '    for j in range(NY_N):',
+      '        for i in range(N_X):',
+      '            if (level, i, j) in CHEVRON_X:',
+      '                mid = mid_x_tag(level, i, j)',
+      '                ops.node(mid, (X[i] + X[i + 1]) / 2.0, Y[j], Z[level])',
+      '                ops.element(' + elementArgs(s, 'beamX', 'beam_x_tag(level, i, j)',
+        'node_tag(level, i, j)', 'mid', 'BX', T.transfBeamX, T.intBeamX) + ')',
+      '                ops.element(' + elementArgs(s, 'beamX', '600000 + level * 1000 + j * N_X + i + 1',
+        'mid', 'node_tag(level, i + 1, j)', 'BX', T.transfBeamX, T.intBeamX) + ')',
+      '            else:',
+      '                ops.element(' + elementArgs(s, 'beamX', 'beam_x_tag(level, i, j)',
+        'node_tag(level, i, j)', 'node_tag(level, i + 1, j)', 'BX', T.transfBeamX, T.intBeamX) + ')',
+      '',
+      'for level in range(1, N_Z + 1):',
+      '    for j in range(N_Y):',
+      '        for i in range(NX_N):',
+      '            if (level, i, j) in CHEVRON_Y:',
+      '                mid = mid_y_tag(level, i, j)',
+      '                ops.node(mid, X[i], (Y[j] + Y[j + 1]) / 2.0, Z[level])',
+      '                ops.element(' + elementArgs(s, 'beamY', 'beam_y_tag(level, i, j)',
+        'node_tag(level, i, j)', 'mid', shared ? 'BX' : 'BY', T.transfBeamY, T.intBeamY) + ')',
+      '                ops.element(' + elementArgs(s, 'beamY', '700000 + level * 1000 + j * NX_N + i + 1',
+        'mid', 'node_tag(level, i, j + 1)', shared ? 'BX' : 'BY', T.transfBeamY, T.intBeamY) + ')',
+      '            else:',
+      '                ops.element(' + elementArgs(s, 'beamY', 'beam_y_tag(level, i, j)',
+        'node_tag(level, i, j)', 'node_tag(level, i, j + 1)', shared ? 'BX' : 'BY', T.transfBeamY, T.intBeamY) + ')',
+      ''
+    );
+  } else {
+    w(
+      '# Beams spanning X',
+      'for level in range(1, N_Z + 1):',
+      '    for j in range(NY_N):',
+      '        for i in range(N_X):',
+      '            ops.element(' + elementArgs(s, 'beamX', 'beam_x_tag(level, i, j)',
+        'node_tag(level, i, j)', 'node_tag(level, i + 1, j)', 'BX', T.transfBeamX, T.intBeamX) + ')',
+      '',
+      '# Beams spanning Y',
+      'for level in range(1, N_Z + 1):',
+      '    for j in range(N_Y):',
+      '        for i in range(NX_N):',
+      '            ops.element(' + elementArgs(s, 'beamY', 'beam_y_tag(level, i, j)',
+        'node_tag(level, i, j)', 'node_tag(level, i, j + 1)', shared ? 'BX' : 'BY', T.transfBeamY, T.intBeamY) + ')',
+      ''
+    );
+  }
+
+  if (isolated || s.useDampers) emitDevices(w, s, model, u, isolated);
 
   /* ──────────────────────────────── loads ──────────────────────────── */
   rule(`${needInt ? 9 : 8} — Gravity loads`);
@@ -407,6 +504,142 @@ export function generateScript(s, model, gm = null) {
 
   return alignComments(L).join('\n');
 }
+
+/* ══════════════════════════ isolators and dampers ═══════════════════ */
+
+/** Python lambda deciding which column bases carry a bearing. */
+function isolatorPredicate(placement) {
+  if (placement === 'perimeter') return 'lambda i, j: i in (0, NX_N - 1) or j in (0, NY_N - 1)';
+  if (placement === 'corner') return 'lambda i, j: i in (0, NX_N - 1) and j in (0, NY_N - 1)';
+  return 'lambda i, j: True';
+}
+
+function emitDevices(w, s, model, u, isolated) {
+  w(
+    `# ${'═'.repeat(70)}`,
+    '#  Isolators and dampers',
+    `# ${'═'.repeat(70)}`,
+    ''
+  );
+
+  if (isolated) {
+    const def = ISOLATOR_TYPES[s.isolatorType];
+
+    w(`# ${def.label}`);
+    emitDeviceConstants(w, def, 'iso', s.isolatorType, s);
+
+    if (def.friction) {
+      const frn = FRICTION_MODELS[s.frictionType];
+      w(`# Friction — ${frn.label}`);
+      emitDeviceConstants(w, frn, 'frn', s.frictionType, s);
+      for (let k = 0; k < def.friction; k++) {
+        w(`ops.frictionModel(${py(s.frictionType)}, ${80 + k}, ${deviceArgs(frn, 'frn').join(', ')})`);
+      }
+      w('');
+    }
+
+    if (def.springMaterial) {
+      w(
+        '# Shear spring shared by every spring of the bearing.',
+        `ops.uniaxialMaterial('Steel01', 94, ${devConst('iso', 'qd')}, ${devConst('iso', 'kInit')}, ${devConst('iso', 'alpha')})`,
+        ''
+      );
+    }
+
+    if (def.aux) {
+      w(
+        '# Bearing behaviour outside the shear plane.',
+        `ISO_KV = ${pf(s.isoKv)}  # vertical [${u.stiffness}]`,
+        `ISO_KT = ${pf(s.isoKt)}  # torsion [${u.rotStiffness}]`,
+        `ISO_KR = ${pf(s.isoKr)}  # rotation [${u.rotStiffness}]`,
+        "ops.uniaxialMaterial('Elastic', 90, ISO_KV)",
+        "ops.uniaxialMaterial('Elastic', 91, ISO_KT)",
+        "ops.uniaxialMaterial('Elastic', 92, ISO_KR)",
+        "ops.uniaxialMaterial('Elastic', 93, ISO_KR)",
+        ''
+      );
+    }
+
+    w(
+      'for j in range(NY_N):',
+      '    for i in range(NX_N):',
+      '        if not HAS_BEARING(i, j):',
+      '            continue',
+      '        ops.element(' + isolatorArgs(s, def) + ')',
+      ''
+    );
+  }
+
+  if (s.useDampers) {
+    const def = DAMPER_TYPES[s.damperType];
+    const dampers = model.elements.filter((e) => e.kind === 'damper');
+
+    w(`# Dampers — ${def.label}, ${s.damperConfig} in ${dampers.length} locations`);
+    emitDeviceConstants(w, def, 'damp', s.damperType, s);
+    w(
+      `ops.uniaxialMaterial('${s.damperType}', 95, ${deviceArgs(def, 'damp').join(', ')})`,
+      '',
+      '# Each device acts along its own axis, so direction 1 of the link.',
+      'DAMPERS = [',
+      ...chunk(dampers.map((e) => `(${e.tag}, ${e.ni}, ${e.nj})`), 4)
+        .map((row) => `    ${row.join(', ')},`),
+      ']',
+      '',
+      'for tag, ni, nj in DAMPERS:',
+      "    ops.element('twoNodeLink', tag, ni, nj, '-mat', 95, '-dir', 1)",
+      ''
+    );
+  }
+}
+
+/**
+ * Positional arguments of a device, as Python constant names. A `positional`
+ * list narrows this when some parameters feed a companion material instead.
+ */
+function deviceArgs(def, group) {
+  const keys = def.positional ?? def.params.map((p) => p.key);
+  return keys.map((key) => devConst(group, key));
+}
+
+function emitDeviceConstants(w, def, group, type, s) {
+  const width = Math.max(...def.params.map((p) => devConst(group, p.key).length));
+  for (const p of def.params) {
+    w(`${devConst(group, p.key).padEnd(width)} = ${pf(s[devKey(group, type, p.key)])}  # ${p.label}`);
+  }
+  w('');
+}
+
+/**
+ * A bearing element call. The three-dimensional form of every flag-based
+ * bearing takes -P, -T, -My and -Mz; the two-dimensional form does not, which
+ * is a common source of broken scripts.
+ */
+function isolatorArgs(s, def) {
+  const head = `'${s.isolatorType}', isolator_tag(i, j), foundation_tag(i, j), node_tag(0, i, j)`;
+  const parts = [head];
+
+  if (def.friction) {
+    parts.push([...Array(def.friction)].map((_, k) => String(80 + k)).join(', '));
+  }
+  // TripleFrictionPendulum takes its four material tags positionally, straight
+  // after the friction tags and before the geometry: vert, rotZ, rotX, rotY.
+  if (def.materialsPositional) parts.push('90, 92, 91, 93');
+
+  parts.push(deviceArgs(def, 'iso').join(', '));
+
+  if (def.matFlag) parts.push(`'${def.matFlag}', 94`);
+
+  if (def.aux) {
+    const mats = { '-P': 90, '-T': 91, '-My': 92, '-Mz': 93, '-Vy': 90, '-Vz': 90 };
+    parts.push(def.aux.map((flag) => `'${flag}', ${mats[flag]}`).join(', '));
+    parts.push(`'-shearDist', ${pf(s.isoShearDist)}`);
+  }
+  if (s.isoRayleigh) parts.push("'-doRayleigh'");
+
+  return parts.filter(Boolean).join(', ');
+}
+
+const chunk = (arr, n) => Array.from({ length: Math.ceil(arr.length / n) }, (_, i) => arr.slice(i * n, i * n + n));
 
 /* ═══════════════════════════════ analyses ═══════════════════════════ */
 

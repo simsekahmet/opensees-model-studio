@@ -37,7 +37,27 @@ const BASIS = {
   column: [new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, -1, 0), new THREE.Vector3(1, 0, 0)],
   beamX:  [new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, -1, 0)],
   beamY:  [new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 1), new THREE.Vector3(1, 0, 0)],
+  isolator: [new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, -1, 0), new THREE.Vector3(1, 0, 0)],
 };
+
+/** Drawing order; devices come last so they sit on top of the frame. */
+const KINDS = ['column', 'beamX', 'beamY', 'isolator', 'damper'];
+
+/**
+ * Local triad of one element. Frame members and isolators are axis aligned so
+ * they use the fixed table; a damper runs diagonally, so its triad is derived
+ * from the member axis with the global Z as the reference up direction.
+ */
+function basisOf(e) {
+  if (BASIS[e.kind]) return BASIS[e.kind];
+  const x = new THREE.Vector3(
+    e.p2[0] - e.p1[0], e.p2[1] - e.p1[1], e.p2[2] - e.p1[2]
+  ).normalize();
+  const ref = Math.abs(x.z) > 0.99 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 0, 1);
+  const z = new THREE.Vector3().crossVectors(x, ref).normalize();
+  const y = new THREE.Vector3().crossVectors(z, x).normalize();
+  return [x, y, z];
+}
 
 export function createViewer(host, labelHost, { onSelect, band } = {}) {
   /* ── renderers ────────────────────────────────────────────────────── */
@@ -206,6 +226,9 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
     if (opts.view === 'plan') return e.story === opts.story;
     if (opts.view === 'elevation') {
       const { axis, index } = opts.frame;
+      // Dampers carry the frame line they were placed on, so they follow it
+      // rather than being matched by element family.
+      if (e.kind === 'damper') return e.axis === axis && e.line === index;
       if (axis === 'x') return e.kind !== 'beamY' && e.j === index;
       return e.kind !== 'beamX' && e.i === index;
     }
@@ -215,7 +238,7 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
   /* ---- frame display ---- */
 
   function buildWireframe(elements) {
-    for (const kind of ['column', 'beamX', 'beamY']) {
+    for (const kind of KINDS) {
       const list = elements.filter((e) => e.kind === kind);
       if (!list.length) continue;
 
@@ -237,7 +260,7 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
   /* ---- extruded display ---- */
 
   function buildExtruded(elements) {
-    for (const kind of ['column', 'beamX', 'beamY']) {
+    for (const kind of KINDS) {
       const list = elements.filter((e) => e.kind === kind);
       if (!list.length) continue;
 
@@ -248,10 +271,10 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
 
       const m = new THREE.Matrix4();
       const basis = new THREE.Matrix4();
-      const [ax, ay, az] = BASIS[kind];
-      basis.makeBasis(ax, ay, az);
 
       list.forEach((e, n) => {
+        const [ax, ay, az] = basisOf(e);
+        basis.makeBasis(ax, ay, az);
         m.copy(basis);
         m.scale(new THREE.Vector3(e.length, 1, 1));
         m.setPosition(
@@ -392,7 +415,7 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
         (e.p1[2] + e.p2[2]) / 2,
       ];
       const len = Math.min(e.length * 0.25, scale * 0.035);
-      BASIS[e.kind].forEach((axis, i) => {
+      basisOf(e).forEach((axis, i) => {
         pts.push(mid[0], mid[1], mid[2]);
         pts.push(mid[0] + axis.x * len, mid[1] + axis.y * len, mid[2] + axis.z * len);
         cols.push(colors[i].r, colors[i].g, colors[i].b, colors[i].r, colors[i].g, colors[i].b);
@@ -698,7 +721,11 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
   /* ── small helpers ────────────────────────────────────────────────── */
 
   function colorOf(kind) {
-    return themeColor(kind === 'column' ? '--el-column' : '--el-beam');
+    return themeColor({
+      column: '--el-column',
+      isolator: '--el-isolator',
+      damper: '--el-damper',
+    }[kind] || '--el-beam');
   }
 
   function clear(group) {

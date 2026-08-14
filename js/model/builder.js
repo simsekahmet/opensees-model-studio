@@ -21,9 +21,15 @@ import { allSections } from './sections.js';
 
 const NODE_BASE = 10000;
 const MASTER_OFFSET = 9999;
+const MID_X_OFFSET = 5000;      // midspan node of a split X beam
+const MID_Y_OFFSET = 7000;      // midspan node of a split Y beam
 const TAG_COLUMN = 100000;
 const TAG_BEAM_X = 200000;
 const TAG_BEAM_Y = 300000;
+const TAG_ISOLATOR = 400000;
+const TAG_DAMPER = 500000;
+const TAG_SPLIT_X = 600000;     // second half of a split X beam
+const TAG_SPLIT_Y = 700000;     // second half of a split Y beam
 
 const FIXITY = {
   Fixed:  [1, 1, 1, 1, 1, 1],
@@ -65,16 +71,45 @@ export function buildModel(s) {
   const nodeByTag = new Map();
   const fixity = FIXITY[s.baseFixity] ?? FIXITY.Fixed;
 
+  // With base isolation the restraint moves down to a separate foundation
+  // node, and the superstructure base is lifted by the bearing height.
+  const isolated = !!s.useIsolation;
+  const isoH = isolated ? Math.max(0, numOr(s.isolatorHeight, 0)) : 0;
+  const isoAt = isolated ? isolatorGrid(s.isolatorPlacement, nxN, nyN) : null;
+
+  const levelZ = (level) => zs[level] + isoH;
+
   for (let level = 0; level <= nz; level++) {
     for (let j = 0; j < nyN; j++) {
       for (let i = 0; i < nxN; i++) {
+        const carriesBearing = isolated && isoAt(i, j);
         const n = {
           tag: nodeTag(level, i, j),
-          x: xs[i], y: ys[j], z: zs[level],
+          x: xs[i], y: ys[j], z: levelZ(level),
           i, j, level,
-          fix: level === 0 ? fixity : null,
+          // A column that has no bearing under it keeps its own restraint.
+          fix: level === 0 && !carriesBearing ? fixity : null,
           mass: 0,
           master: false,
+        };
+        nodes.push(n);
+        nodeByTag.set(n.tag, n);
+      }
+    }
+  }
+
+  // Foundation nodes, numbered below the grid so tags stay easy to read.
+  const foundationTag = (i, j) => gridIndex(i, j) + 1;
+  if (isolated) {
+    for (let j = 0; j < nyN; j++) {
+      for (let i = 0; i < nxN; i++) {
+        if (!isoAt(i, j)) continue;
+        const n = {
+          tag: foundationTag(i, j),
+          x: xs[i], y: ys[j], z: 0,
+          i, j, level: -1,
+          fix: fixity ?? FIXITY.Fixed,
+          mass: 0, master: false, foundation: true,
         };
         nodes.push(n);
         nodeByTag.set(n.tag, n);
@@ -135,6 +170,78 @@ export function buildModel(s) {
     }
   }
 
+  /* ── isolators ──────────────────────────────────────────────────────── */
+  const isoSection = deviceSection(s, sections.column, 'Isolator');
+  if (isolated) {
+    for (let j = 0; j < nyN; j++) {
+      for (let i = 0; i < nxN; i++) {
+        if (!isoAt(i, j)) continue;
+        elements.push(makeElement({
+          tag: TAG_ISOLATOR + gridIndex(i, j) + 1,
+          kind: 'isolator',
+          ni: foundationTag(i, j),
+          nj: nodeTag(0, i, j),
+          nodeByTag, story: 0, i, j,
+          section: isoSection,
+        }));
+      }
+    }
+  }
+
+  /* ── dampers ────────────────────────────────────────────────────────── */
+  const damperSection = deviceSection(s, sections.beamX, 'Damper');
+  const dampers = [];
+  if (s.useDampers) {
+    const stories = selector(s.damperStories, range(1, nz), new Set([1]));
+    const bays = { x: selector(s.damperBays, range(0, nx - 1), new Set([0, nx - 1])),
+                   y: selector(s.damperBays, range(0, ny - 1), new Set([0, ny - 1])) };
+    const lines = { x: selector(s.damperLines, range(0, ny), new Set([0, ny])),
+                    y: selector(s.damperLines, range(0, nx), new Set([0, nx])) };
+    const axes = s.damperAxis === 'both' ? ['x', 'y'] : [s.damperAxis];
+    let counter = 0;
+
+    for (const axis of axes) {
+      const nBays = axis === 'x' ? nx : ny;
+      for (const story of stories) {
+        for (const line of lines[axis]) {
+          for (const bay of bays[axis]) {
+            if (bay >= nBays) continue;
+            // Grid indices of the bay's two bottom corners.
+            const lo = axis === 'x' ? [bay, line] : [line, bay];
+            const hi = axis === 'x' ? [bay + 1, line] : [line, bay + 1];
+
+            const bl = nodeTag(story - 1, ...lo);
+            const br = nodeTag(story - 1, ...hi);
+            const tl = nodeTag(story, ...lo);
+            const tr = nodeTag(story, ...hi);
+
+            const add = (ni, nj) => dampers.push(Object.assign(makeElement({
+              tag: TAG_DAMPER + story * 1000 + (++counter),
+              kind: 'damper',
+              ni, nj, nodeByTag, story, i: lo[0], j: lo[1],
+              section: damperSection,
+            }), { axis, line, bay }));
+
+            if (s.damperConfig === 'chevron') {
+              const beamTag = axis === 'x'
+                ? TAG_BEAM_X + story * 1000 + beamXIndex(nx, bay, line) + 1
+                : TAG_BEAM_Y + story * 1000 + beamYIndex(nxN, line, bay) + 1;
+              const beam = elements.find((e) => e.tag === beamTag);
+              if (!beam) continue;
+              const mid = splitBeam(beam, story, nodes, nodeByTag, elements);
+              add(bl, mid);
+              add(br, mid);
+            } else {
+              add(bl, tr);
+              if (s.damperConfig === 'cross') add(br, tl);
+            }
+          }
+        }
+      }
+    }
+    elements.push(...dampers);
+  }
+
   const elementByTag = new Map(elements.map((e) => [e.tag, e]));
 
   /* ── slab loads onto the beams ──────────────────────────────────────── */
@@ -166,7 +273,10 @@ export function buildModel(s) {
   const rho = numOr(s.density, 0);
   const g = numOr(s.gravityAccel, 9.81);
   if (s.selfWeight && rho > 0) {
-    for (const e of elements) e.wSelf = rho * g * e.section.A;
+    for (const e of elements) {
+      if (e.kind === 'isolator' || e.kind === 'damper') continue;   // devices are weightless here
+      e.wSelf = rho * g * e.section.A;
+    }
   }
 
   /* ── lumped nodal mass ──────────────────────────────────────────────── */
@@ -214,6 +324,15 @@ export function buildModel(s) {
   if (s.baseFixity === 'Free') {
     warnings.push('The base is unrestrained — the model has rigid body modes and the analysis will not converge.');
   }
+  if (isolated && s.rigidDiaphragm) {
+    warnings.push('Rigid diaphragms and base isolation are both on; the isolation level itself has no diaphragm.');
+  }
+  if (s.useDampers && !dampers.length) {
+    warnings.push('No dampers were placed — check the frame line, bay and story selectors.');
+  }
+  if (s.useDampers && s.damperConfig === 'chevron') {
+    warnings.push(`Chevron dampers split ${elements.filter((e) => e.splitSibling).length} beams at midspan, so those beams are two elements each.`);
+  }
   if (s.massSource === 'none' && !s.elementMass && s.runModal) {
     warnings.push('No mass is defined anywhere, so the eigenvalue analysis cannot run. Enable nodal mass or element mass.');
   }
@@ -251,17 +370,20 @@ export function buildModel(s) {
       columns: elements.filter((e) => e.kind === 'column').length,
       beamsX: elements.filter((e) => e.kind === 'beamX').length,
       beamsY: elements.filter((e) => e.kind === 'beamY').length,
+      isolators: elements.filter((e) => e.kind === 'isolator').length,
+      dampers: elements.filter((e) => e.kind === 'damper').length,
       dof: nodes.length * 6,
       floorArea,
       totalFloorArea: floorArea * nz,
-      buildingHeight: zs[zs.length - 1],
+      buildingHeight: zs[zs.length - 1] + isoH,
+      isolationHeight: isoH,
       footprint: [xs[xs.length - 1], ys[ys.length - 1]],
       totalMass, storyMass,
       totalGravityLoad: totalLoad,
     },
     bounds: {
       min: [0, 0, 0],
-      max: [xs[xs.length - 1], ys[ys.length - 1], zs[zs.length - 1]],
+      max: [xs[xs.length - 1], ys[ys.length - 1], zs[zs.length - 1] + isoH],
     },
   };
 }
@@ -282,7 +404,91 @@ function makeElement({ tag, kind, ni, nj, nodeByTag, story, i, j, section }) {
 
 function addLoad(map, base, level, index, w) {
   const el = map.get(base + level * 1000 + index + 1);
-  if (el) el.w += w;
+  if (!el) return;
+  el.w += w;
+  // A beam split for a chevron carries the same intensity on both halves.
+  if (el.splitSibling) {
+    const other = map.get(el.splitSibling);
+    if (other) other.w += w;
+  }
+}
+
+/**
+ * Replaces a beam with two halves joined at a new midspan node, which is what
+ * a chevron damper pair needs to land on. Returns the midspan node tag.
+ */
+function splitBeam(beam, story, nodes, nodeByTag, elements) {
+  if (beam.splitSibling) return beam.nj;
+
+  const alongX = beam.kind === 'beamX';
+  const midOffset = alongX ? MID_X_OFFSET : MID_Y_OFFSET;
+  const splitBase = alongX ? TAG_SPLIT_X : TAG_SPLIT_Y;
+
+  const a = nodeByTag.get(beam.ni);
+  const b = nodeByTag.get(beam.nj);
+  const index = beam.tag % 1000;
+  const midTag = (story + 1) * NODE_BASE + midOffset + index;
+
+  const mid = {
+    tag: midTag,
+    x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, z: (a.z + b.z) / 2,
+    i: beam.i, j: beam.j, level: story,
+    fix: null, mass: 0, master: false, midspan: true,
+  };
+  nodes.push(mid);
+  nodeByTag.set(midTag, mid);
+
+  const second = makeElement({
+    tag: splitBase + story * 1000 + index,
+    kind: beam.kind,
+    ni: midTag, nj: beam.nj,
+    nodeByTag, story, i: beam.i, j: beam.j,
+    section: beam.section,
+  });
+  elements.push(second);
+
+  beam.nj = midTag;
+  beam.p2 = [mid.x, mid.y, mid.z];
+  beam.length /= 2;
+  beam.splitSibling = second.tag;
+
+  return midTag;
+}
+
+/** Which column bases receive a bearing. */
+function isolatorGrid(placement, nxN, nyN) {
+  if (placement === 'perimeter') {
+    return (i, j) => i === 0 || j === 0 || i === nxN - 1 || j === nyN - 1;
+  }
+  if (placement === 'corner') {
+    return (i, j) => (i === 0 || i === nxN - 1) && (j === 0 || j === nyN - 1);
+  }
+  return () => true;
+}
+
+/**
+ * Parses a selector field: `all`, `perimeter`, or an explicit index list.
+ * Anything outside the valid range is dropped rather than silently clamped.
+ */
+function selector(text, all, perimeter) {
+  const raw = String(text ?? '').trim().toLowerCase();
+  if (!raw || raw === 'all') return new Set(all);
+  if (raw === 'perimeter') return new Set([...perimeter].filter((v) => all.includes(v)));
+  const picked = raw.split(/[,;\s]+/).map(Number).filter((n) => Number.isInteger(n) && all.includes(n));
+  return new Set(picked.length ? picked : all);
+}
+
+const range = (from, to) => Array.from({ length: Math.max(0, to - from + 1) }, (_, i) => from + i);
+
+/** A stand-in section so devices can be drawn and listed like any member. */
+function deviceSection(s, reference, name) {
+  const b = Math.max(reference.b * 0.5, 1e-6);
+  return {
+    family: name.toLowerCase(), name, shape: 'Device',
+    b, h: b, A: b * b, Iz: 0, Iy: 0, J: 0,
+    E: reference.E, G: reference.G,
+    modifier: 1, IzEff: 0, IyEff: 0, fiber: null,
+  };
 }
 
 /** Position of a beam within its level, matching the creation order above. */

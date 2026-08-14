@@ -16,6 +16,7 @@ export const UNIT_SYSTEMS = {
     mass: 't', massArea: 't/m²', massVol: 't/m³',
     g: 9.81,
     accel: 'm/s²',
+    stiffness: 'kN/m', rotStiffness: 'kN·m/rad', damping: 'kN·(s/m)^α',
   },
   'N-mm': {
     label: 'N · mm (stress in MPa)',
@@ -25,6 +26,7 @@ export const UNIT_SYSTEMS = {
     mass: 't', massArea: 't/mm²', massVol: 't/mm³',
     g: 9810,
     accel: 'mm/s²',
+    stiffness: 'N/mm', rotStiffness: 'N·mm/rad', damping: 'N·(s/mm)^α',
   },
   'kip-in': {
     label: 'kip · in (stress in ksi)',
@@ -34,6 +36,7 @@ export const UNIT_SYSTEMS = {
     mass: 'kip·s²/in', massArea: 'kip·s²/in³', massVol: 'kip·s²/in⁴',
     g: 386.1,
     accel: 'in/s²',
+    stiffness: 'kip/in', rotStiffness: 'kip·in/rad', damping: 'kip·(s/in)^α',
   },
 };
 

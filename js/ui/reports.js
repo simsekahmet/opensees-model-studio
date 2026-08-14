@@ -9,6 +9,14 @@ import { unitsOf, fmt } from '../units.js';
 
 const MAX_ROWS = 600;
 
+const FAMILY = {
+  column: 'Column',
+  beamX: 'Beam X',
+  beamY: 'Beam Y',
+  isolator: 'Isolator',
+  damper: 'Damper',
+};
+
 /* ═══════════════════════════════ Sections ═══════════════════════════ */
 
 export function renderSections(root, s, model) {
@@ -206,7 +214,10 @@ export function renderData(root, s, model) {
   stats.className = 'stat-row';
   for (const [lbl, val, sub] of [
     ['Nodes', String(st.nodes), `${st.dof} DOF`],
-    ['Elements', String(st.elements), `${st.columns} col · ${st.beamsX + st.beamsY} beam`],
+    ['Elements', String(st.elements),
+      `${st.columns} col · ${st.beamsX + st.beamsY} beam`
+      + (st.isolators ? ` · ${st.isolators} iso` : '')
+      + (st.dampers ? ` · ${st.dampers} damper` : '')],
     ['Footprint', `${fmt(st.footprint[0], 2)} × ${fmt(st.footprint[1], 2)}`, u.length],
     ['Height', fmt(st.buildingHeight, 2), u.length],
     ['Total floor area', fmt(st.totalFloorArea, 1), u.area],
@@ -263,8 +274,10 @@ export function renderData(root, s, model) {
   const elementType = (kind) => (kind === 'column' ? s.colElement : s.beamElement);
   const elRows = model.elements.slice(0, MAX_ROWS).map((e) => [
     String(e.tag),
-    e.kind === 'column' ? 'Column' : e.kind === 'beamX' ? 'Beam X' : 'Beam Y',
-    elementType(e.kind),
+    FAMILY[e.kind] || e.kind,
+    e.kind === 'isolator' ? s.isolatorType
+      : e.kind === 'damper' ? `twoNodeLink · ${s.damperType}`
+      : elementType(e.kind),
     String(e.ni), String(e.nj),
     fmt(e.length, 3),
     e.section.shape === 'Circular' ? `Ø${fmt(e.section.D)}` : `${fmt(e.section.b)} × ${fmt(e.section.h)}`,
@@ -336,7 +349,7 @@ export function renderInspector(panel, titleEl, bodyEl, element, s) {
 /** Aggregate card shown when a selection window catches more than one member. */
 export function renderSelectionSummary(panel, titleEl, bodyEl, elements, s) {
   const u = unitsOf(s.unitSystem);
-  const byKind = { column: 0, beamX: 0, beamY: 0 };
+  const byKind = { column: 0, beamX: 0, beamY: 0, isolator: 0, damper: 0 };
   const stories = new Set();
   let length = 0;
   let load = 0;
@@ -355,6 +368,8 @@ export function renderSelectionSummary(panel, titleEl, bodyEl, elements, s) {
     ['Columns', String(byKind.column)],
     ['Beams — X', String(byKind.beamX)],
     ['Beams — Y', String(byKind.beamY)],
+    ...(byKind.isolator ? [['Isolators', String(byKind.isolator)]] : []),
+    ...(byKind.damper ? [['Dampers', String(byKind.damper)]] : []),
     null,
     ['Stories', [...stories].sort((a, b) => a - b).join(', ')],
     ['Total length', `${fmt(length, 2)} ${u.length}`],

@@ -470,6 +470,8 @@ html[data-theme="light"] .icon-moon { display: none; }
 .sw { width: 12px; height: 3px; border-radius: 2px; display: inline-block; }
 .sw-col  { background: var(--el-column); }
 .sw-beam { background: var(--el-beam); }
+.sw-iso  { background: var(--el-isolator); }
+.sw-damp { background: var(--el-damper); }
 .legend-hint { color: var(--text-3); border-left: 1px solid var(--line); padding-left: 12px; }
 
 /* ---------------------------- inspector -------------------------------- */

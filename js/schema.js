@@ -19,12 +19,20 @@
 
 import { UNIT_SYSTEMS } from './units.js';
 import { CONCRETE_MODELS, STEEL_MODELS, modelsOf, matKey } from './model/materials.js';
+import {
+  ISOLATOR_TYPES, DAMPER_TYPES, FRICTION_MODELS, catalogueOf, devKey,
+} from './model/devices.js';
 
 const systemOptions = Object.entries(UNIT_SYSTEMS).map(([value, u]) => ({ value, label: u.label }));
 
 const isRC    = (s) => s.matSystem === 'rc';
 const isSteel = (s) => s.matSystem === 'steel';
 const isFiber = (s) => s.sectionKind === 'Fiber';
+
+const usesIso      = (s) => !!s.useIsolation;
+const usesDampers  = (s) => !!s.useDampers;
+const usesFriction = (s) => usesIso(s) && !!ISOLATOR_TYPES[s.isolatorType]?.friction;
+const usesAux      = (s) => usesIso(s) && !!ISOLATOR_TYPES[s.isolatorType]?.aux;
 
 export const SCHEMA = [
 
@@ -244,6 +252,68 @@ export const SCHEMA = [
     ],
   },
 
+  /* ══════════════════════════════════════════ Isolators & dampers ══════ */
+  {
+    id: 'devices', title: 'Isolators & Dampers',
+    fields: [
+      { kind: 'sub', label: 'Base isolation' },
+      { id: 'useIsolation', type: 'check', d: false, label: 'Insert a base isolation layer',
+        hint: 'Adds a foundation node under every column and an isolator between it and the superstructure.' },
+      { id: 'isolatorPlacement', type: 'select', label: 'Placement', d: 'all', showIf: usesIso, options: [
+        { value: 'all', label: 'Under every column' },
+        { value: 'perimeter', label: 'Perimeter columns only' },
+        { value: 'corner', label: 'Corner columns only' },
+      ]},
+      { id: 'isolatorHeight', type: 'number', label: 'Bearing height', unit: 'length', showIf: usesIso,
+        d: { 'kN-m': 0.30, 'N-mm': 300, 'kip-in': 12 },
+        hint: 'Zero gives a coincident-node bearing; a height lifts the superstructure.' },
+      { id: 'isolatorType', type: 'select', label: 'Isolator', d: 'elastomericBearingPlasticity',
+        showIf: usesIso, options: modelOptions(ISOLATOR_TYPES) },
+      ...deviceFields('iso', 'isolatorType', usesIso),
+
+      { id: 'frictionType', type: 'select', label: 'Friction model', d: 'Coulomb',
+        showIf: usesFriction, options: modelOptions(FRICTION_MODELS) },
+      ...deviceFields('frn', 'frictionType', usesFriction),
+
+      { kind: 'sub', label: 'Bearing auxiliary stiffness', showIf: usesAux },
+      { id: 'isoKv', type: 'number', label: 'Vertical (P)', unit: 'stiffness', showIf: usesAux,
+        d: { 'kN-m': 1e7, 'N-mm': 1e7, 'kip-in': 57000 } },
+      { id: 'isoKt', type: 'number', label: 'Torsion (T)', unit: 'rotStiffness', half: true, showIf: usesAux,
+        d: { 'kN-m': 1e5, 'N-mm': 1e11, 'kip-in': 5.7e5 } },
+      { id: 'isoKr', type: 'number', label: 'Rotation (My, Mz)', unit: 'rotStiffness', half: true, showIf: usesAux,
+        d: { 'kN-m': 1e5, 'N-mm': 1e11, 'kip-in': 5.7e5 } },
+      { id: 'isoShearDist', type: 'number', label: 'Shear distance ratio', d: 0.5, step: 0.05, showIf: usesAux,
+        hint: 'Fraction of the P-Delta moment carried by the top node.' },
+      { id: 'isoRayleigh', type: 'check', d: false, showIf: usesIso,
+        label: 'Include bearings in Rayleigh damping',
+        hint: 'Off by default — bearings otherwise leak artificial viscous damping into the isolation system.' },
+
+      { kind: 'sub', label: 'Dampers' },
+      { id: 'useDampers', type: 'check', d: false, label: 'Add diagonal dampers',
+        hint: 'Placed as twoNodeLink devices acting along their own axis.' },
+      { id: 'damperType', type: 'select', label: 'Device', d: 'ViscousDamper',
+        showIf: usesDampers, options: modelOptions(DAMPER_TYPES) },
+      ...deviceFields('damp', 'damperType', usesDampers),
+
+      { id: 'damperConfig', type: 'select', label: 'Configuration', d: 'diagonal', showIf: usesDampers, options: [
+        { value: 'diagonal', label: 'Single diagonal' },
+        { value: 'cross', label: 'Cross — both diagonals' },
+        { value: 'chevron', label: 'Chevron — to the beam midspan' },
+      ]},
+      { id: 'damperAxis', type: 'select', label: 'Frames', d: 'both', showIf: usesDampers, options: [
+        { value: 'x', label: 'X–Z frames only' },
+        { value: 'y', label: 'Y–Z frames only' },
+        { value: 'both', label: 'Both directions' },
+      ]},
+      { id: 'damperLines', type: 'text', label: 'Frame lines', d: 'perimeter', showIf: usesDampers,
+        hint: 'all, perimeter, or grid line indices such as 0, 2' },
+      { id: 'damperBays', type: 'text', label: 'Bays', d: 'all', half: true, showIf: usesDampers,
+        hint: 'all or bay indices' },
+      { id: 'damperStories', type: 'text', label: 'Stories', d: 'all', half: true, showIf: usesDampers,
+        hint: 'all or story numbers' },
+    ],
+  },
+
   /* ═════════════════════════════════════════════════ Loads & mass ══════ */
   {
     id: 'loads', title: 'Loads & Mass',
@@ -419,6 +489,28 @@ function pushoverFields(shown, p) {
 
 function modelOptions(models) {
   return Object.entries(models).map(([value, def]) => ({ value, label: def.label }));
+}
+
+/** Same expansion as materialFields, for the isolator, friction and damper catalogues. */
+function deviceFields(group, selectKey, visible) {
+  const out = [];
+  for (const [type, def] of Object.entries(catalogueOf(group))) {
+    const shown = (s) => visible(s) && s[selectKey] === type;
+    for (const p of def.params) {
+      out.push({
+        id: devKey(group, type, p.key),
+        type: 'number',
+        label: p.label,
+        unit: p.unit,
+        d: p.d,
+        step: p.step,
+        half: !!p.half,
+        showIf: shown,
+      });
+    }
+    out.push({ kind: 'break' });
+  }
+  return out;
 }
 
 /**
