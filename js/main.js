@@ -6,10 +6,12 @@
  * reaches across module boundaries.
  */
 
-import { state, resetAll } from './state.js';
+import { state, resetAll, moveNodes, clearNodeOffsets } from './state.js';
 import { renderForm } from './ui/form.js';
 import { initTheme, initTabs, toast, setStatus, downloadText, slug } from './ui/shell.js';
-import { renderSections, renderData, renderInspector, renderSelectionSummary } from './ui/reports.js';
+import {
+  renderSections, renderData, renderInspector, renderSelectionSummary, renderNodeSelection,
+} from './ui/reports.js';
 import { buildModel } from './model/builder.js';
 import { generateScript } from './codegen/openseespy.js';
 import { getRecord, subscribeGM, exportSeries, scriptFileName } from './model/groundmotion.js';
@@ -42,6 +44,7 @@ const dom = {
 
 let model = null;
 let script = '';
+let movePanel = null;   // handle to the joint move controls, when they are up
 
 /* ─────────────────────────────── boot ───────────────────────────────── */
 
@@ -87,10 +90,19 @@ collapseAll.addEventListener('click', () => {
 });
 
 /* Display mode */
-for (const btn of document.querySelectorAll('.seg-btn')) {
+for (const btn of document.querySelectorAll('.seg-btn[data-display]')) {
   btn.addEventListener('click', () => {
-    for (const b of document.querySelectorAll('.seg-btn')) b.classList.toggle('is-active', b === btn);
+    for (const b of document.querySelectorAll('.seg-btn[data-display]')) b.classList.toggle('is-active', b === btn);
     viewer.setOptions({ display: btn.dataset.display });
+  });
+}
+
+/* Selection mode — members or joints */
+for (const btn of document.querySelectorAll('.seg-btn[data-select]')) {
+  btn.addEventListener('click', () => {
+    for (const b of document.querySelectorAll('.seg-btn[data-select]')) b.classList.toggle('is-active', b === btn);
+    viewer.clearSelection();
+    viewer.setOptions({ selectMode: btn.dataset.select });
   });
 }
 
@@ -130,6 +142,11 @@ dom.selFrame.addEventListener('change', () => {
 window.addEventListener('keydown', (ev) => {
   if ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter') { ev.preventDefault(); compile(); }
   if (ev.key === 'Escape') viewer.clearSelection();
+  // Ctrl+R jumps straight to the move fields when joints are selected.
+  if ((ev.ctrlKey || ev.metaKey) && (ev.key === 'r' || ev.key === 'R') && movePanel) {
+    ev.preventDefault();
+    movePanel.focus();
+  }
 });
 
 compile();
@@ -159,7 +176,7 @@ function compile() {
   dom.sceneEmpty.classList.add('is-hidden');
 
   viewer.setModel(model);
-  showSelection([]);
+  showSelection({ mode: 'element', elements: [], nodes: [] });
 
   populatePickers();
   refreshPanels();
@@ -195,16 +212,43 @@ function markStale() {
 }
 
 /** Mirrors the viewer's selection into the toolbar counter and the inspector. */
-function showSelection(elements) {
-  const n = elements.length;
+function showSelection({ mode, elements, nodes }) {
+  const picked = mode === 'node' ? nodes : elements;
+  const noun = mode === 'node' ? 'joint' : 'element';
+  const n = picked.length;
+
   dom.selectInfo.textContent = n === 0
     ? 'No selection'
-    : n === 1 ? `1 element selected` : `${n} elements selected`;
+    : `${n} ${noun}${n > 1 ? 's' : ''} selected`;
   dom.selectInfo.classList.toggle('has-selection', n > 0);
 
-  if (n === 0) { dom.inspector.hidden = true; return; }
+  if (n === 0) { dom.inspector.hidden = true; movePanel = null; return; }
+
+  if (mode === 'node') {
+    movePanel = renderNodeSelection(dom.inspector, dom.inspectorTitle, dom.inspectorBody, nodes, state, {
+      onMove: applyMove,
+      onReset: (tags) => { clearNodeOffsets(tags); recompileKeepingJoints(tags); },
+    });
+    return;
+  }
+
+  movePanel = null;
   if (n === 1) renderInspector(dom.inspector, dom.inspectorTitle, dom.inspectorBody, elements[0], state);
   else renderSelectionSummary(dom.inspector, dom.inspectorTitle, dom.inspectorBody, elements, state);
+}
+
+/** Moves the selected joints, then rebuilds with them still selected. */
+function applyMove(tags, delta) {
+  moveNodes(tags, delta);
+  recompileKeepingJoints(tags);
+  toast('Joints moved',
+    `${tags.length} joint${tags.length > 1 ? 's' : ''} by (${delta.join(', ')}) — attached members followed.`,
+    'ok');
+}
+
+function recompileKeepingJoints(tags) {
+  compile();
+  viewer.setNodeSelection(tags);
 }
 
 /* ──────────────────────────── view controls ─────────────────────────── */

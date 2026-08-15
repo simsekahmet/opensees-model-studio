@@ -94,6 +94,11 @@
           <button class="seg-btn" data-display="extruded">Extruded</button>
         </div>
 
+        <div class="seg" role="group" aria-label="Selection mode">
+          <button class="seg-btn is-active" data-select="element" title="Select members">Elements</button>
+          <button class="seg-btn" data-select="node" title="Select joints, then move them">Nodes</button>
+        </div>
+
         <div class="menu-wrap">
           <button class="btn btn-ghost btn-sm" id="btn-view-menu" aria-expanded="false">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
@@ -141,7 +146,6 @@
           <span><i class="sw sw-beam"></i>Beam</span>
           <span id="legend-iso" hidden><i class="sw sw-iso"></i>Isolator</span>
           <span id="legend-damp" hidden><i class="sw sw-damp"></i>Damper</span>
-          <span class="legend-hint">Drag ▸ window select · Drag ◂ crossing select · Middle drag pan · Shift + middle orbit</span>
         </div>
         <aside class="inspector" id="inspector" hidden>
           <header>

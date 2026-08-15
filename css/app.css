@@ -480,7 +480,6 @@ html[data-theme="light"] .icon-moon { display: none; }
 .sw-beam { background: var(--el-beam); }
 .sw-iso  { background: var(--el-isolator); }
 .sw-damp { background: var(--el-damper); }
-.legend-hint { color: var(--text-3); border-left: 1px solid var(--line); padding-left: 12px; }
 
 /* ---------------------------- inspector -------------------------------- */
 
@@ -505,6 +504,21 @@ html[data-theme="light"] .icon-moon { display: none; }
 .kv dt { color: var(--text-3); }
 .kv dd { margin: 0; font-family: var(--mono); color: var(--text-1); }
 .kv-sep { height: 1px; background: var(--line-soft); margin: 2px 12px; }
+
+/* joint move controls */
+.move-box { padding: 10px 12px 12px; border-top: 1px solid var(--line-soft); }
+.move-head {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .07em;
+  color: var(--text-3); margin-bottom: 7px;
+}
+.move-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.move-cell { display: flex; flex-direction: column; gap: 3px; }
+.move-cell span { font-size: 10.5px; color: var(--text-3); font-family: var(--mono); }
+.move-cell .input { height: 27px; font-size: 12px; }
+.move-actions { display: flex; gap: 6px; margin-top: 9px; }
+.move-actions .btn { flex: 1; justify-content: center; }
+.move-actions .btn:disabled { opacity: .45; cursor: default; }
+.move-hint { margin-top: 8px; font-size: 10.5px; color: var(--text-3); line-height: 1.4; }
 
 /* ============================ Document panels =========================== */
 

@@ -79,18 +79,27 @@ export function buildModel(s) {
 
   const levelZ = (level) => zs[level] + isoH;
 
+  // Manual joint moves are applied here, before any element is built, so every
+  // member touching a moved joint picks up the new coordinates automatically.
+  const offsets = s.nodeOffsets || {};
+  const movedTags = [];
+
   for (let level = 0; level <= nz; level++) {
     for (let j = 0; j < nyN; j++) {
       for (let i = 0; i < nxN; i++) {
         const carriesBearing = isolated && isoAt(i, j);
+        const tag = nodeTag(level, i, j);
+        const [dx, dy, dz] = offsets[tag] || [0, 0, 0];
+        if (dx || dy || dz) movedTags.push(tag);
         const n = {
-          tag: nodeTag(level, i, j),
-          x: xs[i], y: ys[j], z: levelZ(level),
+          tag,
+          x: xs[i] + dx, y: ys[j] + dy, z: levelZ(level) + dz,
           i, j, level,
           // A column that has no bearing under it keeps its own restraint.
           fix: level === 0 && !carriesBearing ? fixity : null,
           mass: 0,
           master: false,
+          moved: !!(dx || dy || dz),
         };
         nodes.push(n);
         nodeByTag.set(n.tag, n);
@@ -104,12 +113,16 @@ export function buildModel(s) {
     for (let j = 0; j < nyN; j++) {
       for (let i = 0; i < nxN; i++) {
         if (!isoAt(i, j)) continue;
+        const tag = foundationTag(i, j);
+        const [dx, dy, dz] = offsets[tag] || [0, 0, 0];
+        if (dx || dy || dz) movedTags.push(tag);
         const n = {
-          tag: foundationTag(i, j),
-          x: xs[i], y: ys[j], z: 0,
+          tag,
+          x: xs[i] + dx, y: ys[j] + dy, z: dz,
           i, j, level: -1,
           fix: fixity ?? FIXITY.Fixed,
           mass: 0, master: false, foundation: true,
+          moved: !!(dx || dy || dz),
         };
         nodes.push(n);
         nodeByTag.set(n.tag, n);
@@ -324,6 +337,11 @@ export function buildModel(s) {
   if (s.baseFixity === 'Free') {
     warnings.push('The base is unrestrained — the model has rigid body modes and the analysis will not converge.');
   }
+  if (movedTags.length) {
+    warnings.push(`${movedTags.length} joint${movedTags.length > 1 ? 's have' : ' has'} been moved off the grid. `
+      + 'Member lengths follow the moved joints, but slab loads and tributary masses are still '
+      + 'computed from the nominal bay spacing.');
+  }
   if (isolated && s.rigidDiaphragm) {
     warnings.push('Rigid diaphragms and base isolation are both on; the isolation level itself has no diaphragm.');
   }
@@ -372,6 +390,7 @@ export function buildModel(s) {
       beamsY: elements.filter((e) => e.kind === 'beamY').length,
       isolators: elements.filter((e) => e.kind === 'isolator').length,
       dampers: elements.filter((e) => e.kind === 'damper').length,
+      movedNodes: movedTags.length,
       dof: nodes.length * 6,
       floorArea,
       totalFloorArea: floorArea * nz,
@@ -381,10 +400,9 @@ export function buildModel(s) {
       totalMass, storyMass,
       totalGravityLoad: totalLoad,
     },
-    bounds: {
-      min: [0, 0, 0],
-      max: [xs[xs.length - 1], ys[ys.length - 1], zs[zs.length - 1] + isoH],
-    },
+    // Taken from the nodes themselves so a moved joint cannot fall outside the
+    // extents the viewer frames and scales against.
+    bounds: extentsOf(nodes, [xs[xs.length - 1], ys[ys.length - 1], zs[zs.length - 1] + isoH]),
   };
 }
 
@@ -479,6 +497,18 @@ function selector(text, all, perimeter) {
 }
 
 const range = (from, to) => Array.from({ length: Math.max(0, to - from + 1) }, (_, i) => from + i);
+
+/** Bounding box of the built nodes, never smaller than the nominal grid. */
+function extentsOf(nodes, gridMax) {
+  const min = [0, 0, 0];
+  const max = [...gridMax];
+  for (const n of nodes) {
+    min[0] = Math.min(min[0], n.x); max[0] = Math.max(max[0], n.x);
+    min[1] = Math.min(min[1], n.y); max[1] = Math.max(max[1], n.y);
+    min[2] = Math.min(min[2], n.z); max[2] = Math.max(max[2], n.z);
+  }
+  return { min, max };
+}
 
 /** A stand-in section so devices can be drawn and listed like any member. */
 function deviceSection(s, reference, name) {

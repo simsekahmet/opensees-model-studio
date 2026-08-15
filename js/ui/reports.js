@@ -395,6 +395,119 @@ function sep() {
   return d;
 }
 
+/**
+ * Joint panel: what is selected, and the move controls. A move is a
+ * displacement in global coordinates applied to the selected joints; every
+ * element that touches one of them follows, because element ends are read
+ * from the node coordinates.
+ */
+export function renderNodeSelection(panel, titleEl, bodyEl, nodes, s, { onMove, onReset }) {
+  const u = unitsOf(s.unitSystem);
+  titleEl.textContent = nodes.length === 1
+    ? `Joint ${nodes[0].tag}`
+    : `${nodes.length} joints selected`;
+  bodyEl.textContent = '';
+
+  const dl = document.createElement('dl');
+  dl.className = 'kv';
+  const put = (k, v) => {
+    const dt = document.createElement('dt'); dt.textContent = k;
+    const dd = document.createElement('dd'); dd.textContent = v;
+    dl.append(dt, dd);
+  };
+
+  if (nodes.length === 1) {
+    const n = nodes[0];
+    put('Position', `${fmt(n.x, 3)}, ${fmt(n.y, 3)}, ${fmt(n.z, 3)}`);
+    put('Level', n.foundation ? 'Foundation' : String(n.level));
+    put('Restraint', n.fix ? n.fix.join(' ') : '— free —');
+    put('Mass', `${fmt(n.mass, 4)} ${u.mass}`);
+  } else {
+    const levels = [...new Set(nodes.map((n) => n.level))].sort((a, b) => a - b);
+    put('Levels', levels.join(', '));
+    put('Restrained', String(nodes.filter((n) => n.fix).length));
+  }
+
+  const offsets = s.nodeOffsets || {};
+  const movedCount = nodes.filter((n) => offsets[n.tag]).length;
+  if (movedCount) {
+    dl.append(sep());
+    if (nodes.length === 1) {
+      const [dx, dy, dz] = offsets[nodes[0].tag];
+      put('Moved by', `${fmt(dx, 3)}, ${fmt(dy, 3)}, ${fmt(dz, 3)}`);
+    } else {
+      put('Already moved', `${movedCount} of ${nodes.length}`);
+    }
+  }
+  bodyEl.append(dl);
+
+  /* Move controls */
+  const box = document.createElement('div');
+  box.className = 'move-box';
+
+  const head = document.createElement('p');
+  head.className = 'move-head';
+  head.textContent = `Move by [${u.length}]`;
+  box.append(head);
+
+  const row = document.createElement('div');
+  row.className = 'move-row';
+  const inputs = {};
+  for (const axis of ['dx', 'dy', 'dz']) {
+    const cell = document.createElement('label');
+    cell.className = 'move-cell';
+    const lab = document.createElement('span');
+    lab.textContent = axis.toUpperCase().replace('D', '');
+    const inp = document.createElement('input');
+    inp.type = 'number';
+    inp.className = 'input';
+    inp.step = 'any';
+    inp.value = '0';
+    inp.autocomplete = 'off';
+    inputs[axis] = inp;
+    cell.append(lab, inp);
+    row.append(cell);
+  }
+  box.append(row);
+
+  const read = () => ['dx', 'dy', 'dz'].map((k) => {
+    const v = Number(inputs[k].value);
+    return Number.isFinite(v) ? v : 0;
+  });
+
+  const actions = document.createElement('div');
+  actions.className = 'move-actions';
+
+  const apply = document.createElement('button');
+  apply.className = 'btn btn-primary btn-sm';
+  apply.textContent = 'Apply move';
+  apply.addEventListener('click', () => {
+    const d = read();
+    if (d.every((v) => v === 0)) return;
+    onMove(nodes.map((n) => n.tag), d);
+  });
+
+  const reset = document.createElement('button');
+  reset.className = 'btn btn-ghost btn-sm';
+  reset.textContent = 'Back to grid';
+  reset.disabled = !movedCount;
+  reset.addEventListener('click', () => onReset(nodes.map((n) => n.tag)));
+
+  actions.append(apply, reset);
+  box.append(actions);
+
+  const hint = document.createElement('p');
+  hint.className = 'move-hint';
+  hint.textContent = 'Applied in global axes. Attached members follow the joint.';
+  box.append(hint);
+
+  bodyEl.append(box);
+  panel.hidden = false;
+
+  // Ctrl+R lands here, so give the first field focus.
+  return { focus: () => inputs.dx.focus() };
+}
+
 /* ═════════════════════════════════ helpers ══════════════════════════ */
 
 function heading(text) {

@@ -23,6 +23,9 @@ export function defaultsFor(unitSystem = DEFAULT_SYSTEM) {
     out[f.id] = (f.d && typeof f.d === 'object') ? f.d[unitSystem] : f.d;
   }
   out.unitSystem = unitSystem;
+  // Manual joint moves live outside the schema: they are keyed by node tag
+  // rather than being one named parameter. See `setNodeOffset`.
+  out.nodeOffsets = {};
   return out;
 }
 
@@ -62,6 +65,38 @@ export function setValue(id, value) {
   emit({ id, value });
 }
 
+/**
+ * Moves joints by a displacement in global coordinates. The offsets sit on top
+ * of the parametric grid rather than replacing it, so changing bay widths or
+ * story heights later keeps the moves; every element touching a moved joint
+ * follows it, because element ends are read from the node coordinates.
+ */
+export function moveNodes(tags, [dx, dy, dz]) {
+  const next = { ...state.nodeOffsets };
+  for (const tag of tags) {
+    const [x, y, z] = next[tag] || [0, 0, 0];
+    const moved = [x + dx, y + dy, z + dz];
+    // Drop the entry once a joint is back on the grid, so the model stays clean.
+    if (moved.every((v) => Math.abs(v) < 1e-12)) delete next[tag];
+    else next[tag] = moved;
+  }
+  state.nodeOffsets = next;
+  persist();
+  emit({ id: 'nodeOffsets', tags });
+}
+
+/** Puts the given joints back onto the parametric grid. */
+export function clearNodeOffsets(tags = null) {
+  if (!tags) state.nodeOffsets = {};
+  else {
+    const next = { ...state.nodeOffsets };
+    for (const tag of tags) delete next[tag];
+    state.nodeOffsets = next;
+  }
+  persist();
+  emit({ id: 'nodeOffsets', tags });
+}
+
 /** Restores every field to its default in the current unit system. */
 export function resetAll() {
   const fresh = defaultsFor(state.unitSystem);
@@ -88,6 +123,7 @@ function load() {
   for (const key of Object.keys(merged)) {
     if (saved[key] !== undefined) merged[key] = saved[key];
   }
+  if (!merged.nodeOffsets || typeof merged.nodeOffsets !== 'object') merged.nodeOffsets = {};
   return merged;
 }
 

@@ -206,16 +206,46 @@ export function generateScript(s, model, gm = null) {
 
   /* ─────────────────────────────── model ───────────────────────────── */
   rule('3 — Model space, nodes and restraints');
+  const moves = Object.entries(s.nodeOffsets || {})
+    .filter(([, d]) => d && (d[0] || d[1] || d[2]));
+
   w(
     'ops.wipe()',
     "ops.model('basic', '-ndm', 3, '-ndf', 6)",
-    '',
-    'for level in range(N_Z + 1):',
-    '    for j in range(NY_N):',
-    '        for i in range(NX_N):',
-    '            ops.node(node_tag(level, i, j), X[i], Y[j], Z[level])',
     ''
   );
+
+  if (moves.length) {
+    w(
+      '# Joints moved off the grid, as a displacement in global coordinates.',
+      '# Every element touching one of these follows it, because element ends',
+      '# are read from the node coordinates.',
+      'NODE_MOVES = {',
+      ...moves.map(([tag, d]) => `    ${tag}: (${pf(d[0])}, ${pf(d[1])}, ${pf(d[2])}),`),
+      '}',
+      '',
+      '',
+      'def moved(tag, x, y, z):',
+      '    dx, dy, dz = NODE_MOVES.get(tag, (0.0, 0.0, 0.0))',
+      '    return x + dx, y + dy, z + dz',
+      '',
+      '',
+      'for level in range(N_Z + 1):',
+      '    for j in range(NY_N):',
+      '        for i in range(NX_N):',
+      '            tag = node_tag(level, i, j)',
+      '            ops.node(tag, *moved(tag, X[i], Y[j], Z[level]))',
+      ''
+    );
+  } else {
+    w(
+      'for level in range(N_Z + 1):',
+      '    for j in range(NY_N):',
+      '        for i in range(NX_N):',
+      '            ops.node(node_tag(level, i, j), X[i], Y[j], Z[level])',
+      ''
+    );
+  }
 
   const fix = { Fixed: '1, 1, 1, 1, 1, 1', Pinned: '1, 1, 1, 0, 0, 0', Roller: '0, 0, 1, 0, 0, 0' }[s.baseFixity];
 
@@ -228,7 +258,9 @@ export function generateScript(s, model, gm = null) {
       'for j in range(NY_N):',
       '    for i in range(NX_N):',
       '        if HAS_BEARING(i, j):',
-      '            ops.node(foundation_tag(i, j), X[i], Y[j], 0.0)',
+      moves.length
+        ? '            ops.node(foundation_tag(i, j), *moved(foundation_tag(i, j), X[i], Y[j], 0.0))'
+        : '            ops.node(foundation_tag(i, j), X[i], Y[j], 0.0)',
       `            ops.fix(foundation_tag(i, j), ${fix || '1, 1, 1, 1, 1, 1'})`,
       ...(fix ? [
         '        else:',
@@ -332,7 +364,8 @@ export function generateScript(s, model, gm = null) {
       '        for i in range(N_X):',
       '            if (level, i, j) in CHEVRON_X:',
       '                mid = mid_x_tag(level, i, j)',
-      '                ops.node(mid, (X[i] + X[i + 1]) / 2.0, Y[j], Z[level])',
+      '                a, b = ops.nodeCoord(node_tag(level, i, j)), ops.nodeCoord(node_tag(level, i + 1, j))',
+      '                ops.node(mid, (a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0, (a[2] + b[2]) / 2.0)',
       '                ops.element(' + elementArgs(s, 'beamX', 'beam_x_tag(level, i, j)',
         'node_tag(level, i, j)', 'mid', 'BX', T.transfBeamX, T.intBeamX) + ')',
       '                ops.element(' + elementArgs(s, 'beamX', '600000 + level * 1000 + j * N_X + i + 1',
@@ -346,7 +379,8 @@ export function generateScript(s, model, gm = null) {
       '        for i in range(NX_N):',
       '            if (level, i, j) in CHEVRON_Y:',
       '                mid = mid_y_tag(level, i, j)',
-      '                ops.node(mid, X[i], (Y[j] + Y[j + 1]) / 2.0, Z[level])',
+      '                a, b = ops.nodeCoord(node_tag(level, i, j)), ops.nodeCoord(node_tag(level, i, j + 1))',
+      '                ops.node(mid, (a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0, (a[2] + b[2]) / 2.0)',
       '                ops.element(' + elementArgs(s, 'beamY', 'beam_y_tag(level, i, j)',
         'node_tag(level, i, j)', 'mid', shared ? 'BX' : 'BY', T.transfBeamY, T.intBeamY) + ')',
       '                ops.element(' + elementArgs(s, 'beamY', '700000 + level * 1000 + j * NX_N + i + 1',

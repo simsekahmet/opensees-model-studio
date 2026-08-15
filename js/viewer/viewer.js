@@ -126,10 +126,14 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
   let model = null;
   let picks = [];          // per drawable: { object, elements, mode }
   let visibleElements = [];
+  let visibleNodes = [];
+  let nodePick = null;     // { object, nodes }
   const selection = new Set();
+  const nodeSelection = new Set();
 
   const opts = {
     display: 'wireframe',
+    selectMode: 'element',   // 'element' | 'node'
     view: 'view3d',
     story: 1,
     frame: { axis: 'x', index: 0 },
@@ -154,6 +158,7 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
   function setModel(next) {
     model = next;
     selection.clear();
+    nodeSelection.clear();
     opts.story = Math.min(opts.story, model.grid.nz) || 1;
     rebuild();
     applyCamera();
@@ -199,12 +204,33 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
 
   function clearSelection() {
     selection.clear();
+    nodeSelection.clear();
     drawSelection();
-    onSelect?.([]);
+    emitSelection();
   }
 
   function getSelection() {
     return [...selection].map((tag) => model?.elementByTag.get(tag)).filter(Boolean);
+  }
+
+  function getNodeSelection() {
+    return [...nodeSelection].map((tag) => model?.nodeByTag.get(tag)).filter(Boolean);
+  }
+
+  /** Restores a joint selection after a recompile replaced the model. */
+  function setNodeSelection(tags) {
+    nodeSelection.clear();
+    for (const tag of tags) if (model?.nodeByTag.has(tag)) nodeSelection.add(tag);
+    drawSelection();
+    emitSelection();
+  }
+
+  function emitSelection() {
+    onSelect?.({
+      mode: opts.selectMode,
+      elements: getSelection(),
+      nodes: getNodeSelection(),
+    });
   }
 
   function dispose() {
@@ -226,6 +252,8 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
     const nodeTags = new Set();
     for (const e of visibleElements) { nodeTags.add(e.ni); nodeTags.add(e.nj); }
     const nodes = model.nodes.filter((n) => nodeTags.has(n.tag) || (n.master && opts.view === 'view3d'));
+    visibleNodes = nodes;
+    nodePick = null;
 
     const scale = Math.max(Math.hypot(...model.bounds.max), 1e-3);
 
@@ -346,7 +374,9 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
 
   function buildNodes(nodes, scale) {
     if (!nodes.length) return;
-    const geom = new THREE.SphereGeometry(scale * 0.004, 10, 8);
+    // Joints are drawn larger while picking them, so they are easy to hit.
+    const picking = opts.selectMode === 'node';
+    const geom = new THREE.SphereGeometry(scale * (picking ? 0.007 : 0.004), 12, 8);
     const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(themeColor('--el-node')) });
     const mesh = new THREE.InstancedMesh(geom, mat, nodes.length);
     mesh.frustumCulled = false;
@@ -357,6 +387,7 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
     });
     mesh.instanceMatrix.needsUpdate = true;
     gNodes.add(mesh);
+    nodePick = { object: mesh, nodes };
   }
 
   function buildSupports(scale) {
@@ -645,12 +676,13 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
     renderer.domElement.releasePointerCapture?.(ev.pointerId);
     hideBand();
 
-    if (drag.moved) boxSelect();
-    else clickSelect();
+    const nodeMode = opts.selectMode === 'node';
+    if (drag.moved) (nodeMode ? boxSelectNodes : boxSelect)();
+    else (nodeMode ? clickSelectNode : clickSelect)();
 
     drag = null;
     drawSelection();
-    onSelect?.(getSelection());
+    emitSelection();
   });
 
   renderer.domElement.addEventListener('pointercancel', () => { hideBand(); drag = null; });
@@ -691,6 +723,35 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
       return;
     }
     if (!drag.additive) selection.clear();
+  }
+
+  function clickSelectNode() {
+    if (!nodePick) return;
+    pointer.x = (drag.x1 / drag.rect.width) * 2 - 1;
+    pointer.y = -(drag.y1 / drag.rect.height) * 2 + 1;
+    raycaster.setFromCamera(pointer, camera);
+
+    const hit = raycaster.intersectObject(nodePick.object, false)[0];
+    const node = hit && nodePick.nodes[hit.instanceId];
+    if (!drag.additive) nodeSelection.clear();
+    if (!node) return;
+    if (nodeSelection.has(node.tag)) nodeSelection.delete(node.tag);
+    else nodeSelection.add(node.tag);
+  }
+
+  /** A joint is a point, so window and crossing amount to the same test. */
+  function boxSelectNodes() {
+    const box = {
+      x0: Math.min(drag.x0, drag.x1), x1: Math.max(drag.x0, drag.x1),
+      y0: Math.min(drag.y0, drag.y1), y1: Math.max(drag.y0, drag.y1),
+    };
+    const w = drag.rect.width, h = drag.rect.height;
+    if (!drag.additive) nodeSelection.clear();
+
+    for (const n of visibleNodes) {
+      const p = toScreen([n.x, n.y, n.z], w, h);
+      if (p && inBox(p, box)) nodeSelection.add(n.tag);
+    }
   }
 
   /**
@@ -746,23 +807,45 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
 
   function drawSelection() {
     clear(gSelection);
-    if (!model || !selection.size) return;
+    if (!model) return;
+    const accent = new THREE.Color(themeColor('--el-select'));
 
-    const pts = [];
-    for (const tag of selection) {
-      const e = model.elementByTag.get(tag);
-      if (e) pts.push(...e.p1, ...e.p2);
+    if (selection.size) {
+      const pts = [];
+      for (const tag of selection) {
+        const e = model.elementByTag.get(tag);
+        if (e) pts.push(...e.p1, ...e.p2);
+      }
+      if (pts.length) {
+        const geom = new THREE.BufferGeometry();
+        geom.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+        const line = new THREE.LineSegments(geom, new THREE.LineBasicMaterial({
+          color: accent, depthTest: false,
+        }));
+        line.renderOrder = 999;
+        gSelection.add(line);
+      }
     }
-    if (!pts.length) return;
 
-    const geom = new THREE.BufferGeometry();
-    geom.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
-    const line = new THREE.LineSegments(geom, new THREE.LineBasicMaterial({
-      color: new THREE.Color(themeColor('--el-select')),
-      depthTest: false,
-    }));
-    line.renderOrder = 999;
-    gSelection.add(line);
+    if (nodeSelection.size) {
+      const picked = getNodeSelection();
+      const scale = Math.max(Math.hypot(...model.bounds.max), 1e-3);
+      const geom = new THREE.SphereGeometry(scale * 0.011, 14, 10);
+      const mesh = new THREE.InstancedMesh(
+        geom,
+        new THREE.MeshBasicMaterial({ color: accent, depthTest: false }),
+        picked.length
+      );
+      mesh.frustumCulled = false;
+      mesh.renderOrder = 1000;
+      const m = new THREE.Matrix4();
+      picked.forEach((n, i) => {
+        m.makeTranslation(n.x, n.y, n.z);
+        mesh.setMatrixAt(i, m);
+      });
+      mesh.instanceMatrix.needsUpdate = true;
+      gSelection.add(mesh);
+    }
   }
 
   /* ── loop and resize ──────────────────────────────────────────────── */
@@ -792,7 +875,11 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
   resize();
   tick();
 
-  return { setModel, setOptions, fit, refreshTheme, clearSelection, getSelection, dispose };
+  return {
+    setModel, setOptions, fit, refreshTheme,
+    clearSelection, getSelection, getNodeSelection, setNodeSelection,
+    dispose,
+  };
 
   /* ── small helpers ────────────────────────────────────────────────── */
 
