@@ -29,6 +29,20 @@ const MAX_LOCAL_AXES = 2000;
 const DRAG_THRESHOLD = 4;
 
 /**
+ * Where a label's box sits relative to the point it names, as a fraction of
+ * the box itself — this is `CSS2DObject.center`, so the gap is fixed on screen
+ * at every zoom level. Values outside 0…1 push the box clear of the anchor:
+ * a node tag lands up and to the right of the joint, an element tag sits just
+ * above the member, and neither covers the geometry it labels.
+ */
+const ANCHOR = {
+  node: [-0.16, 1.34],
+  elem: [0.5, 1.34],
+  dim:  [0.5, 0.5],
+  axis: [0.5, 0.5],
+};
+
+/**
  * Section-local axes expressed in world coordinates, per element family.
  * These are the same triads the `geomTransf` vecxz values produce in the
  * generated script, so the local-axis display is not a separate convention.
@@ -131,6 +145,10 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
   const raycaster = new THREE.Raycaster();
   const pointer = new THREE.Vector2();
 
+  /** Labels by priority, most important first — see `declutter`. */
+  const labelSets = { axis: [], dim: [], node: [], elem: [] };
+  let declutterKey = '';
+
   /* ── public API ───────────────────────────────────────────────────── */
 
   function setModel(next) {
@@ -200,6 +218,8 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
   function rebuild() {
     for (const g of [gElements, gNodes, gSupports, gGrid, gDims, gLocal, gAxes, gLabels, gSelection]) clear(g);
     picks = [];
+    for (const set of Object.values(labelSets)) set.length = 0;
+    declutterKey = '';
     if (!model) return;
 
     visibleElements = model.elements.filter(elementVisible);
@@ -388,11 +408,12 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
     ];
     for (const [dir, token, label] of dirs) {
       gAxes.add(new THREE.ArrowHelper(
-        dir, origin, len, new THREE.Color(themeColor(token)), len * 0.22, len * 0.11
+        dir, origin, len, new THREE.Color(themeColor(token)), len * 0.20, len * 0.10
       ));
-      addTag(gAxes, label,
-        dir.x * len * 1.2, dir.y * len * 1.2, dir.z * len * 1.2,
-        `tag-axis ax-${label.toLowerCase()}`);
+      // Just clear of the arrowhead rather than floating well past it.
+      labelSets.axis.push(addTag(gAxes, label,
+        dir.x * len * 1.09, dir.y * len * 1.09, dir.z * len * 1.09,
+        `tag-axis ax-${label.toLowerCase()}`));
     }
   }
 
@@ -441,7 +462,7 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
     for (let i = 0; i < xs.length - 1; i++) {
       pts.push(xs[i], yDim, 0, xs[i + 1], yDim, 0);
       pts.push(xs[i], 0, 0, xs[i], yDim * 1.25, 0);
-      addTag(gDims, fmt(xs[i + 1] - xs[i], 2), (xs[i] + xs[i + 1]) / 2, yDim * 1.35, 0, 'tag-dim');
+      labelSets.dim.push(addTag(gDims, fmt(xs[i + 1] - xs[i], 2), (xs[i] + xs[i + 1]) / 2, yDim * 1.35, 0, 'tag-dim'));
     }
     pts.push(xs[xs.length - 1], 0, 0, xs[xs.length - 1], yDim * 1.25, 0);
 
@@ -450,7 +471,7 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
     for (let j = 0; j < ys.length - 1; j++) {
       pts.push(xDim, ys[j], 0, xDim, ys[j + 1], 0);
       pts.push(0, ys[j], 0, xDim * 1.25, ys[j], 0);
-      addTag(gDims, fmt(ys[j + 1] - ys[j], 2), xDim * 1.35, (ys[j] + ys[j + 1]) / 2, 0, 'tag-dim');
+      labelSets.dim.push(addTag(gDims, fmt(ys[j + 1] - ys[j], 2), xDim * 1.35, (ys[j] + ys[j + 1]) / 2, 0, 'tag-dim'));
     }
     pts.push(0, ys[ys.length - 1], 0, xDim * 1.25, ys[ys.length - 1], 0);
 
@@ -458,9 +479,9 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
     if (opts.view !== 'plan') {
       for (let k = 0; k < zs.length - 1; k++) {
         pts.push(xDim, yDim, zs[k], xDim, yDim, zs[k + 1]);
-        addTag(gDims, fmt(zs[k + 1] - zs[k], 2), xDim, yDim, (zs[k] + zs[k + 1]) / 2, 'tag-dim');
+        labelSets.dim.push(addTag(gDims, fmt(zs[k + 1] - zs[k], 2), xDim, yDim, (zs[k] + zs[k + 1]) / 2, 'tag-dim'));
       }
-      addTag(gDims, `H = ${fmt(zs[zs.length - 1], 2)}`, xDim, yDim, zs[zs.length - 1] * 1.03, 'tag-dim');
+      labelSets.dim.push(addTag(gDims, `H = ${fmt(zs[zs.length - 1], 2)}`, xDim, yDim, zs[zs.length - 1] * 1.03, 'tag-dim'));
     }
 
     const geom = new THREE.BufferGeometry();
@@ -473,24 +494,78 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
   /* ---- labels ---- */
 
   function buildLabels(elements, nodes) {
+    // Node tags sit up and to the right of the joint; element tags sit just
+    // above the member midpoint. Neither covers what it names.
     if (opts.nodeLabels && nodes.length <= MAX_NODE_LABELS) {
-      for (const n of nodes) addTag(gLabels, String(n.tag), n.x, n.y, n.z, 'tag-node');
+      for (const n of nodes) {
+        labelSets.node.push(addTag(gLabels, String(n.tag), n.x, n.y, n.z, 'tag-node', ANCHOR.node));
+      }
     }
     if (opts.elemLabels && elements.length <= MAX_ELEM_LABELS) {
       for (const e of elements) {
-        addTag(gLabels, String(e.tag),
-          (e.p1[0] + e.p2[0]) / 2, (e.p1[1] + e.p2[1]) / 2, (e.p1[2] + e.p2[2]) / 2, 'tag-elem');
+        labelSets.elem.push(addTag(gLabels, String(e.tag),
+          (e.p1[0] + e.p2[0]) / 2, (e.p1[1] + e.p2[1]) / 2, (e.p1[2] + e.p2[2]) / 2,
+          'tag-elem', ANCHOR.elem));
       }
     }
   }
 
-  function addTag(group, text, x, y, z, cls) {
+  /**
+   * `anchor` is the point of the label box that lands on the 3D position, in
+   * box-relative coordinates: (0.5, 0.5) centres it, (0, 1) puts its
+   * bottom-left corner there so the box sits up and to the right. Anchoring
+   * this way keeps the label clear of the geometry at every zoom level,
+   * because the offset is a property of the box rather than a world offset.
+   */
+  /**
+   * Hides labels that would overlap one already on screen, the way a CAD view
+   * thins its annotation as you zoom out. Dimensions and axis letters win over
+   * node tags, which win over element tags.
+   *
+   * Runs only when the camera has moved, and reads the screen position back
+   * out of the transform CSS2DRenderer just wrote, so no layout is forced.
+   * Culling uses `visibility` because the renderer owns `display`.
+   */
+  function declutter() {
+    const key = `${camera.position.x.toFixed(2)},${camera.position.y.toFixed(2)},${camera.position.z.toFixed(2)}`
+      + `|${camera.zoom.toFixed(3)}|${controls.target.x.toFixed(2)},${controls.target.y.toFixed(2)},${controls.target.z.toFixed(2)}`;
+    if (key === declutterKey) return;
+    declutterKey = key;
+
+    const taken = [];
+    for (const group of [labelSets.axis, labelSets.dim, labelSets.node, labelSets.elem]) {
+      for (const el of group) {
+        if (el.style.display === 'none') continue;      // outside the frustum
+
+        const m = /translate\((-?[\d.]+)px,\s*(-?[\d.]+)px\)/.exec(el.style.transform);
+        if (!m) continue;
+
+        // Cached once — the text is fixed, so the box never changes size.
+        if (el._w === undefined) { el._w = el.offsetWidth; el._h = el.offsetHeight; }
+        if (!el._w) { el._w = undefined; continue; }
+
+        const x = Number(m[1]) - el.dataset.cx * el._w;
+        const y = Number(m[2]) - el.dataset.cy * el._h;
+        const box = [x, y, x + el._w, y + el._h];
+
+        const clash = taken.some((t) => box[0] < t[2] && box[2] > t[0] && box[1] < t[3] && box[3] > t[1]);
+        el.style.visibility = clash ? 'hidden' : '';
+        if (!clash) taken.push(box);
+      }
+    }
+  }
+
+  function addTag(group, text, x, y, z, cls, anchor = [0.5, 0.5]) {
     const div = document.createElement('div');
     div.className = `tag ${cls}`;
     div.textContent = text;
     const obj = new CSS2DObject(div);
+    obj.center.set(anchor[0], anchor[1]);
     obj.position.set(x, y, z);
+    div.dataset.cx = anchor[0];
+    div.dataset.cy = anchor[1];
     group.add(obj);
+    return div;
   }
 
   /* ── cameras ──────────────────────────────────────────────────────── */
@@ -710,6 +785,7 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
     controls.update();
     renderer.render(scene, camera);
     labelRenderer.render(scene, camera);
+    declutter();
   }
 
   refreshTheme();

@@ -427,16 +427,24 @@ html[data-theme="light"] .icon-moon { display: none; }
 
 .label-layer { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
 
+/* CSS2DRenderer writes the transform inline, so a label's offset from its
+   anchor point is set through CSS2DObject.center in the viewer rather than
+   here — see ANCHOR in js/viewer/viewer.js. */
 .tag {
-  font: 600 10px/1 var(--mono);
-  padding: 2px 5px;
-  border-radius: 4px;
+  font: 600 9.5px/1 var(--mono);
+  padding: 1.5px 4px;
+  border-radius: 3px;
   white-space: nowrap;
   border: 1px solid transparent;
-  transform: translate(-50%, -50%);
+  opacity: .95;
 }
-.tag-node { background: var(--bg-1); color: var(--text-2); border-color: var(--line); }
-.tag-elem { background: var(--bg-1); color: var(--el-column); border-color: var(--line); }
+.tag-node {
+  background: var(--bg-1); color: var(--text-2); border-color: var(--line);
+}
+.tag-elem {
+  background: color-mix(in srgb, var(--bg-1) 86%, transparent);
+  color: var(--el-column); border-color: var(--line-soft);
+}
 .tag-dim  { background: transparent; color: var(--el-dim); font-weight: 500; }
 .tag-axis { background: transparent; font: 700 12px/1 var(--mono); }
 .tag-axis.ax-x { color: var(--axis-x); }
