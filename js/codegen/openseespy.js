@@ -114,6 +114,11 @@ export function generateScript(s, model, gm = null) {
   emitSectionConsts(w, 'BX', beamX, u, fiber);
   if (!shared) emitSectionConsts(w, 'BY', beamY, u, fiber);
 
+  // Members edited in the inspector. Identical edits share one section, so
+  // resizing twenty columns to the same size still emits a single definition.
+  const edited = groupEdits(model);
+  for (const g of edited.groups) emitSectionConsts(w, g.prefix, g.section, u, fiber);
+
   w(
     '# Loads',
     `DEAD_FLOOR = ${pf(s.deadFloor)}  # [${u.areaLoad}]`,
@@ -315,6 +320,14 @@ export function generateScript(s, model, gm = null) {
     w('');
   }
 
+  for (const g of edited.groups) {
+    w(`# Edited members — ${g.label}`);
+    if (fiber) emitFiberSection(w, s, g.section, g.secTag, g.prefix, steelSystem);
+    else {
+      w(`ops.section('Elastic', ${g.secTag}, E_MOD, ${g.prefix}_A, ${g.prefix}_IZ, ${g.prefix}_IY, G_MOD, ${g.prefix}_J)`, '');
+    }
+  }
+
   /* ───────────────────────── transformations ───────────────────────── */
   rule('6 — Geometric transformations');
   w(
@@ -336,16 +349,34 @@ export function generateScript(s, model, gm = null) {
       w(`ops.beamIntegration(${py(s.integration)}, ${T.intBeamX}, ${T.secBeamX}, ${pi(s.numIntPts)})`);
       w(`ops.beamIntegration(${py(s.integration)}, ${T.intBeamY}, ${shared ? T.secBeamX : T.secBeamY}, ${pi(s.numIntPts)})`);
     }
+    for (const g of edited.groups) {
+      if (!usesSection(g.family === 'column' ? s.colElement : s.beamElement)) continue;
+      w(`ops.beamIntegration(${py(s.integration)}, ${g.intTag}, ${g.secTag}, ${pi(s.numIntPts)})  # ${g.label}`);
+    }
     w('');
   }
 
   /* ─────────────────────────────── elements ────────────────────────── */
   rule(`${needInt ? 8 : 7} — Elements`);
+
+  if (edited.tags.length) {
+    w(
+      '# Members given their own dimensions in the studio are skipped by the',
+      '# loops below and built individually at the end of this section.',
+      'EDITED = {',
+      ...chunk(edited.tags.map(String), 8).map((row) => `    ${row.join(', ')},`),
+      '}',
+      ''
+    );
+  }
+  const skip = (tagExpr) => (edited.tags.length ? [`            if ${tagExpr} in EDITED:`, '                continue'] : []);
+
   w(
     '# Columns',
     'for story in range(N_Z):',
     '    for j in range(NY_N):',
     '        for i in range(NX_N):',
+    ...skip('col_tag(story, i, j)'),
     '            ops.element(' + elementArgs(s, 'column', 'col_tag(story, i, j)',
       'node_tag(story, i, j)', 'node_tag(story + 1, i, j)', 'COL', T.transfCol, T.intCol) + ')',
     ''
@@ -396,6 +427,7 @@ export function generateScript(s, model, gm = null) {
       'for level in range(1, N_Z + 1):',
       '    for j in range(NY_N):',
       '        for i in range(N_X):',
+      ...skip('beam_x_tag(level, i, j)'),
       '            ops.element(' + elementArgs(s, 'beamX', 'beam_x_tag(level, i, j)',
         'node_tag(level, i, j)', 'node_tag(level, i + 1, j)', 'BX', T.transfBeamX, T.intBeamX) + ')',
       '',
@@ -403,10 +435,22 @@ export function generateScript(s, model, gm = null) {
       'for level in range(1, N_Z + 1):',
       '    for j in range(N_Y):',
       '        for i in range(NX_N):',
+      ...skip('beam_y_tag(level, i, j)'),
       '            ops.element(' + elementArgs(s, 'beamY', 'beam_y_tag(level, i, j)',
         'node_tag(level, i, j)', 'node_tag(level, i, j + 1)', shared ? 'BX' : 'BY', T.transfBeamY, T.intBeamY) + ')',
       ''
     );
+  }
+
+  if (edited.tags.length) {
+    w('# Members with edited dimensions');
+    for (const g of edited.groups) {
+      for (const e of g.elements) {
+        w('ops.element(' + elementArgs(s, e.kind, String(e.tag), String(e.ni), String(e.nj),
+          g.prefix, transfOf(e.kind), g.intTag) + ')');
+      }
+    }
+    w('');
   }
 
   if (isolated || s.useDampers) emitDevices(w, s, model, u, isolated);
@@ -448,6 +492,7 @@ export function generateScript(s, model, gm = null) {
     '            add_load(beam_y_tag(level, i, j), w_y)',
     '            add_load(beam_y_tag(level, i + 1, j), w_y)',
     '',
+    ...loadEditLines(model),
     "ops.timeSeries('Linear', 1)",
     "ops.pattern('Plain', 1, 1)",
     '',
@@ -537,6 +582,67 @@ export function generateScript(s, model, gm = null) {
   );
 
   return alignComments(L).join('\n');
+}
+
+/* ═══════════════════════════ per-member edits ═══════════════════════ */
+
+/** Transformation tag for a member family. */
+const transfOf = (kind) =>
+  (kind === 'column' ? T.transfCol : kind === 'beamX' ? T.transfBeamX : T.transfBeamY);
+
+/**
+ * Collects the members whose dimensions were edited in the inspector and
+ * groups the identical ones, so twenty columns resized the same way share one
+ * section, one integration and one set of constants.
+ */
+function groupEdits(model) {
+  const byKey = new Map();
+
+  for (const e of model.elements) {
+    if (!e.overridden || e.section.shape === 'Device') continue;
+    const sec = e.section;
+    const key = `${e.kind}|${sec.shape}|${sec.b}|${sec.h}|${sec.D ?? ''}|${sec.tf ?? ''}|${sec.tw ?? ''}`;
+    if (!byKey.has(key)) byKey.set(key, { family: e.kind, section: sec, elements: [] });
+    byKey.get(key).elements.push(e);
+  }
+
+  const groups = [...byKey.values()]
+    // Only a genuine dimension change earns its own section; a member edited
+    // for its load alone keeps the family section.
+    .filter((g) => g.elements.some((e) => e.section !== familySection(model, e.kind)))
+    .map((g, n) => ({
+      ...g,
+      prefix: `OV${n + 1}`,
+      secTag: 500 + n,
+      intTag: 500 + n,
+      label: `${g.elements.length} × ${g.family} ${dimsLabel(g.section)}`,
+    }));
+
+  return { groups, tags: groups.flatMap((g) => g.elements.map((e) => e.tag)) };
+}
+
+function familySection(model, kind) {
+  const { column, beamX, beamY } = model.sections;
+  return kind === 'column' ? column : kind === 'beamX' ? beamX : beamY;
+}
+
+function dimsLabel(sec) {
+  if (sec.shape === 'Circular') return `Ø${pf(sec.D)}`;
+  if (sec.shape === 'ISection') return `${pf(sec.h)}/${pf(sec.bf)}/${pf(sec.tf)}/${pf(sec.tw)}`;
+  return `${pf(sec.b)} × ${pf(sec.h)}`;
+}
+
+/** Slab loads edited member by member, replacing the distributed value. */
+function loadEditLines(model) {
+  const edits = model.elements.filter((e) => e.overridden && e.loadEdited);
+  if (!edits.length) return [];
+  return [
+    '# Slab loads edited member by member in the studio.',
+    'beam_load.update({',
+    ...edits.map((e) => `    ${e.tag}: ${pf(e.w)},`),
+    '})',
+    '',
+  ];
 }
 
 /* ══════════════════════════ isolators and dampers ═══════════════════ */

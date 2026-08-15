@@ -20,6 +20,25 @@ tables, and a runnable `.py` script — all from a static page.
 | **Model Data** | Story, element and node tables — tags, coordinates, restraints, lengths, section sizes, line loads and masses. |
 | **Python Code** | The generated OpenSeesPy script, syntax highlighted, ready to copy or download. |
 
+## Editing in the view
+
+The scene toolbar has an **Elements / Nodes** switch that decides what the
+rubber band picks. Dragging left-to-right takes only what is fully inside the
+box, right-to-left also takes what it touches, and Ctrl or Shift adds to the
+selection.
+
+- **Members** — the inspector lets you change that member's section dimensions
+  and its slab load. Edits apply to the whole selection, so twenty columns can
+  be resized at once, and identical edits share one section in the script.
+- **Joints** — the inspector gives X, Y and Z displacement fields. Everything
+  attached follows the joint, because element ends are read from the node
+  coordinates.
+
+Both kinds of edit sit on top of the parametric grid rather than replacing it:
+they survive a recompile and later changes to bay widths or story heights, and
+`Use model values` / `Back to grid` removes them. Every edit is written into the
+generated script on the next **Compile**.
+
 Everything you set in the sidebar maps onto a real OpenSeesPy command:
 
 - **Materials** — `Elastic`, `Concrete01`, `Concrete02`, `Concrete04`, `ElasticPP`,

@@ -217,6 +217,14 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
     return [...nodeSelection].map((tag) => model?.nodeByTag.get(tag)).filter(Boolean);
   }
 
+  /** Restores a member selection after a recompile replaced the model. */
+  function setSelection(tags) {
+    selection.clear();
+    for (const tag of tags) if (model?.elementByTag.has(tag)) selection.add(tag);
+    drawSelection();
+    emitSelection();
+  }
+
   /** Restores a joint selection after a recompile replaced the model. */
   function setNodeSelection(tags) {
     nodeSelection.clear();
@@ -877,7 +885,7 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
 
   return {
     setModel, setOptions, fit, refreshTheme,
-    clearSelection, getSelection, getNodeSelection, setNodeSelection,
+    clearSelection, getSelection, setSelection, getNodeSelection, setNodeSelection,
     dispose,
   };
 

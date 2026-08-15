@@ -23,9 +23,10 @@ export function defaultsFor(unitSystem = DEFAULT_SYSTEM) {
     out[f.id] = (f.d && typeof f.d === 'object') ? f.d[unitSystem] : f.d;
   }
   out.unitSystem = unitSystem;
-  // Manual joint moves live outside the schema: they are keyed by node tag
-  // rather than being one named parameter. See `setNodeOffset`.
+  // Manual joint moves and per-member edits live outside the schema: they are
+  // keyed by node or element tag rather than being one named parameter.
   out.nodeOffsets = {};
+  out.elementOverrides = {};
   return out;
 }
 
@@ -97,6 +98,40 @@ export function clearNodeOffsets(tags = null) {
   emit({ id: 'nodeOffsets', tags });
 }
 
+/**
+ * Edits individual members: section dimensions and the uniform slab load.
+ * Keys carrying `undefined` are ignored, so a patch can set only what the user
+ * actually filled in. An empty edit removes the member from the override table
+ * and it goes back to whatever the Sections and Loads groups say.
+ */
+export function setElementOverrides(tags, patch) {
+  const next = { ...state.elementOverrides };
+  for (const tag of tags) {
+    const merged = { ...next[tag] };
+    for (const [key, value] of Object.entries(patch)) {
+      if (value === undefined || value === null || value === '') delete merged[key];
+      else merged[key] = value;
+    }
+    if (Object.keys(merged).length) next[tag] = merged;
+    else delete next[tag];
+  }
+  state.elementOverrides = next;
+  persist();
+  emit({ id: 'elementOverrides', tags });
+}
+
+/** Returns the listed members to the model-wide sections and loads. */
+export function clearElementOverrides(tags = null) {
+  if (!tags) state.elementOverrides = {};
+  else {
+    const next = { ...state.elementOverrides };
+    for (const tag of tags) delete next[tag];
+    state.elementOverrides = next;
+  }
+  persist();
+  emit({ id: 'elementOverrides', tags });
+}
+
 /** Restores every field to its default in the current unit system. */
 export function resetAll() {
   const fresh = defaultsFor(state.unitSystem);
@@ -124,6 +159,7 @@ function load() {
     if (saved[key] !== undefined) merged[key] = saved[key];
   }
   if (!merged.nodeOffsets || typeof merged.nodeOffsets !== 'object') merged.nodeOffsets = {};
+  if (!merged.elementOverrides || typeof merged.elementOverrides !== 'object') merged.elementOverrides = {};
   return merged;
 }
 

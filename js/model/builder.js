@@ -17,7 +17,7 @@
  */
 
 import { expandList } from '../state.js';
-import { allSections } from './sections.js';
+import { allSections, sectionWithDims, EDITABLE_DIMS } from './sections.js';
 
 const NODE_BASE = 10000;
 const MASTER_OFFSET = 9999;
@@ -63,6 +63,22 @@ export function buildModel(s) {
   }
 
   const sections = allSections(s);
+
+  // Per-member edits made in the inspector. A dimension edit gives that member
+  // its own section; a load edit is applied after the slab distribution below.
+  const overrides = s.elementOverrides || {};
+  const sectionCache = new Map();
+  const sectionFor = (tag, base) => {
+    const ov = overrides[tag];
+    if (!ov) return base;
+    const dims = EDITABLE_DIMS[base.shape] || [];
+    if (!dims.some((k) => ov[k] !== undefined)) return base;
+
+    const key = `${base.shape}|${dims.map((k) => ov[k] ?? base[k]).join(',')}`;
+    if (!sectionCache.has(key)) sectionCache.set(key, sectionWithDims(s, base, ov));
+    return sectionCache.get(key);
+  };
+
   const gridIndex = (i, j) => j * nxN + i;
   const nodeTag = (level, i, j) => (level + 1) * NODE_BASE + gridIndex(i, j) + 1;
 
@@ -137,13 +153,14 @@ export function buildModel(s) {
   for (let level = 0; level < nz; level++) {
     for (let j = 0; j < nyN; j++) {
       for (let i = 0; i < nxN; i++) {
+        const tag = TAG_COLUMN + level * 1000 + gridIndex(i, j) + 1;
         elements.push(makeElement({
-          tag: TAG_COLUMN + level * 1000 + gridIndex(i, j) + 1,
+          tag,
           kind: 'column',
           ni: nodeTag(level, i, j),
           nj: nodeTag(level + 1, i, j),
           nodeByTag, story: level + 1, i, j,
-          section: sections.column,
+          section: sectionFor(tag, sections.column),
         }));
       }
     }
@@ -154,13 +171,14 @@ export function buildModel(s) {
     let k = 0;
     for (let j = 0; j < nyN; j++) {
       for (let i = 0; i < nx; i++) {
+        const tag = TAG_BEAM_X + level * 1000 + (k++) + 1;
         elements.push(makeElement({
-          tag: TAG_BEAM_X + level * 1000 + (k++) + 1,
+          tag,
           kind: 'beamX',
           ni: nodeTag(level, i, j),
           nj: nodeTag(level, i + 1, j),
           nodeByTag, story: level, i, j,
-          section: sections.beamX,
+          section: sectionFor(tag, sections.beamX),
         }));
       }
     }
@@ -171,13 +189,14 @@ export function buildModel(s) {
     let k = 0;
     for (let j = 0; j < ny; j++) {
       for (let i = 0; i < nxN; i++) {
+        const tag = TAG_BEAM_Y + level * 1000 + (k++) + 1;
         elements.push(makeElement({
-          tag: TAG_BEAM_Y + level * 1000 + (k++) + 1,
+          tag,
           kind: 'beamY',
           ni: nodeTag(level, i, j),
           nj: nodeTag(level, i, j + 1),
           nodeByTag, story: level, i, j,
-          section: sections.beamY,
+          section: sectionFor(tag, sections.beamY),
         }));
       }
     }
@@ -278,6 +297,23 @@ export function buildModel(s) {
         // The two Y-beams bounding this panel (at x = i and x = i+1).
         addLoad(elementByTag, TAG_BEAM_Y, level, beamYIndex(nxN, i, j), wY);
         addLoad(elementByTag, TAG_BEAM_Y, level, beamYIndex(nxN, i + 1, j), wY);
+      }
+    }
+  }
+
+  // Per-member load edits replace whatever the slab distribution produced.
+  const editedTags = [];
+  for (const [key, ov] of Object.entries(overrides)) {
+    const el = elementByTag.get(Number(key));
+    if (!el) continue;
+    el.overridden = true;
+    editedTags.push(el.tag);
+    if (ov.w !== undefined) {
+      el.w = numOr(ov.w, el.w);
+      el.loadEdited = true;
+      if (el.splitSibling) {
+        const other = elementByTag.get(el.splitSibling);
+        if (other) { other.w = el.w; other.loadEdited = true; other.overridden = true; }
       }
     }
   }
@@ -391,6 +427,7 @@ export function buildModel(s) {
       isolators: elements.filter((e) => e.kind === 'isolator').length,
       dampers: elements.filter((e) => e.kind === 'damper').length,
       movedNodes: movedTags.length,
+      editedElements: editedTags.length,
       dof: nodes.length * 6,
       floorArea,
       totalFloorArea: floorArea * nz,

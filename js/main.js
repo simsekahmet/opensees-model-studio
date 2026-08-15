@@ -6,7 +6,9 @@
  * reaches across module boundaries.
  */
 
-import { state, resetAll, moveNodes, clearNodeOffsets } from './state.js';
+import {
+  state, resetAll, moveNodes, clearNodeOffsets, setElementOverrides, clearElementOverrides,
+} from './state.js';
 import { renderForm } from './ui/form.js';
 import { initTheme, initTabs, toast, setStatus, downloadText, slug } from './ui/shell.js';
 import {
@@ -233,8 +235,29 @@ function showSelection({ mode, elements, nodes }) {
   }
 
   movePanel = null;
-  if (n === 1) renderInspector(dom.inspector, dom.inspectorTitle, dom.inspectorBody, elements[0], state);
-  else renderSelectionSummary(dom.inspector, dom.inspectorTitle, dom.inspectorBody, elements, state);
+  const handlers = { onEdit: applyMemberEdit, onResetEdit: resetMemberEdit };
+  if (n === 1) renderInspector(dom.inspector, dom.inspectorTitle, dom.inspectorBody, elements[0], state, handlers);
+  else renderSelectionSummary(dom.inspector, dom.inspectorTitle, dom.inspectorBody, elements, state, handlers);
+}
+
+/** Applies edited dimensions or slab load, then rebuilds keeping the selection. */
+function applyMemberEdit(tags, patch) {
+  setElementOverrides(tags, patch);
+  recompileKeepingMembers(tags);
+  const what = Object.keys(patch).map((k) => (k === 'w' ? 'slab load' : k)).join(', ');
+  toast('Members updated',
+    `${tags.length} member${tags.length > 1 ? 's' : ''} — ${what}. The script now carries the change.`,
+    'ok');
+}
+
+function resetMemberEdit(tags) {
+  clearElementOverrides(tags);
+  recompileKeepingMembers(tags);
+}
+
+function recompileKeepingMembers(tags) {
+  compile();
+  viewer.setSelection(tags);
 }
 
 /** Moves the selected joints, then rebuilds with them still selected. */

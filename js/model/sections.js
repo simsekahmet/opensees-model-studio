@@ -105,6 +105,40 @@ function familyName(family) {
   return { column: 'Column', beamX: 'Beam — X direction', beamY: 'Beam — Y direction' }[family];
 }
 
+/** Dimensions a shape exposes for editing, in the order they are shown. */
+export const EDITABLE_DIMS = {
+  Rectangular: ['b', 'h'],
+  Circular: ['D'],
+  ISection: ['h', 'bf', 'tf', 'tw'],
+};
+
+/**
+ * Rebuilds one member's section from edited dimensions, recomputing area,
+ * inertia, torsion constant and — for a fiber section — the whole fiber mesh,
+ * so an edited member is described exactly like any other.
+ */
+export function sectionWithDims(s, base, dims) {
+  const pick = (key) => {
+    const v = Number(dims[key]);
+    return Number.isFinite(v) && v > 0 ? v : base[key];
+  };
+
+  const geom = base.shape === 'Circular'
+    ? circle(pick('D'))
+    : base.shape === 'ISection'
+      ? iSection(pick('h'), pick('bf'), pick('tf'), pick('tw'))
+      : rectangle(pick('b'), pick('h'));
+
+  const isFiber = s.sectionKind === 'Fiber';
+  return {
+    ...base,
+    ...geom,
+    IzEff: geom.Iz * base.modifier,
+    IyEff: geom.Iy * base.modifier,
+    fiber: isFiber ? fiberLayout(s, geom, base.family === 'column' ? 'column' : 'beam') : null,
+  };
+}
+
 /* ────────────────────────── fiber definition ────────────────────────── */
 
 /**

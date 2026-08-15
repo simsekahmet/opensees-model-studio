@@ -6,6 +6,7 @@
  */
 
 import { unitsOf, fmt } from '../units.js';
+import { EDITABLE_DIMS } from '../model/sections.js';
 
 const MAX_ROWS = 600;
 
@@ -307,7 +308,7 @@ export function renderData(root, s, model) {
 
 /* ═══════════════════════════════ Inspector ══════════════════════════ */
 
-export function renderInspector(panel, titleEl, bodyEl, element, s) {
+export function renderInspector(panel, titleEl, bodyEl, element, s, handlers = {}) {
   if (!element) { panel.hidden = true; return; }
   const u = unitsOf(s.unitSystem);
   const sec = element.section;
@@ -343,11 +344,116 @@ export function renderInspector(panel, titleEl, bodyEl, element, s) {
     dl.append(dt, dd);
   }
   bodyEl.append(dl);
+  bodyEl.append(memberEditor([element], s, handlers));
   panel.hidden = false;
 }
 
+/**
+ * Editable section dimensions and slab load for the selected members. Values
+ * shared by every selected member are pre-filled; where they differ the field
+ * is left blank and only takes effect if the user types something.
+ */
+function memberEditor(elements, s, { onEdit, onResetEdit } = {}) {
+  const box = document.createElement('div');
+  box.className = 'move-box';
+  if (!onEdit) return box;
+
+  const editable = elements.filter((e) => e.section.shape !== 'Device');
+  if (!editable.length) return box;
+
+  const u = unitsOf(s.unitSystem);
+  const shape = editable[0].section.shape;
+  const uniformShape = editable.every((e) => e.section.shape === shape);
+
+  const head = document.createElement('p');
+  head.className = 'move-head';
+  head.textContent = uniformShape ? `Edit ${shape.toLowerCase()} section` : 'Edit slab load';
+  box.append(head);
+
+  const inputs = {};
+  const addField = (key, label, unit, current) => {
+    const cell = document.createElement('label');
+    cell.className = 'move-cell';
+    const lab = document.createElement('span');
+    lab.textContent = unit ? `${label} [${unit}]` : label;
+    const inp = document.createElement('input');
+    inp.type = 'number';
+    inp.className = 'input';
+    inp.step = 'any';
+    inp.autocomplete = 'off';
+    if (current !== null) inp.value = String(Number(current.toPrecision(10)));
+    else inp.placeholder = 'mixed';
+    // Remembered so Apply submits only what the user actually changed.
+    inp.dataset.initial = inp.value;
+    inputs[key] = inp;
+    cell.append(lab, inp);
+    return cell;
+  };
+
+  /** The common value across the selection, or null when they disagree. */
+  const common = (read) => {
+    const first = read(editable[0]);
+    return editable.every((e) => Math.abs(read(e) - first) < 1e-12) ? first : null;
+  };
+
+  if (uniformShape) {
+    const row = document.createElement('div');
+    row.className = 'move-row';
+    const keys = EDITABLE_DIMS[shape] || [];
+    row.style.gridTemplateColumns = `repeat(${Math.min(keys.length, 2)}, 1fr)`;
+    for (const key of keys) {
+      row.append(addField(key, DIM_LABEL[key] || key, u.length, common((e) => e.section[key])));
+    }
+    box.append(row);
+  }
+
+  // Only beams carry a slab load, so columns are not offered the field.
+  if (editable.some((e) => e.kind !== 'column')) {
+    const loadRow = document.createElement('div');
+    loadRow.className = 'move-row';
+    loadRow.style.gridTemplateColumns = '1fr';
+    loadRow.append(addField('w', 'Slab load w', u.lineLoad, common((e) => e.w)));
+    box.append(loadRow);
+  }
+
+  const actions = document.createElement('div');
+  actions.className = 'move-actions';
+
+  const apply = document.createElement('button');
+  apply.className = 'btn btn-primary btn-sm';
+  apply.textContent = 'Apply to selection';
+  apply.addEventListener('click', () => {
+    const patch = {};
+    for (const [key, inp] of Object.entries(inputs)) {
+      const text = inp.value.trim();
+      if (text === '' || text === inp.dataset.initial) continue;   // untouched
+      const v = Number(text);
+      if (Number.isFinite(v)) patch[key] = v;
+    }
+    if (Object.keys(patch).length) onEdit(editable.map((e) => e.tag), patch);
+  });
+
+  const reset = document.createElement('button');
+  reset.className = 'btn btn-ghost btn-sm';
+  reset.textContent = 'Use model values';
+  reset.disabled = !editable.some((e) => (s.elementOverrides || {})[e.tag]);
+  reset.addEventListener('click', () => onResetEdit(editable.map((e) => e.tag)));
+
+  actions.append(apply, reset);
+  box.append(actions);
+
+  const hint = document.createElement('p');
+  hint.className = 'move-hint';
+  hint.textContent = 'Applied on Compile, and written into the generated script.';
+  box.append(hint);
+
+  return box;
+}
+
+const DIM_LABEL = { b: 'Width b', h: 'Depth h', D: 'Diameter D', bf: 'Flange bf', tf: 'Flange tf', tw: 'Web tw' };
+
 /** Aggregate card shown when a selection window catches more than one member. */
-export function renderSelectionSummary(panel, titleEl, bodyEl, elements, s) {
+export function renderSelectionSummary(panel, titleEl, bodyEl, elements, s, handlers = {}) {
   const u = unitsOf(s.unitSystem);
   const byKind = { column: 0, beamX: 0, beamY: 0, isolator: 0, damper: 0 };
   const stories = new Set();
@@ -385,6 +491,7 @@ export function renderSelectionSummary(panel, titleEl, bodyEl, elements, s) {
     dl.append(dt, dd);
   }
   bodyEl.append(dl);
+  bodyEl.append(memberEditor(elements, s, handlers));
   panel.hidden = false;
 }
 
