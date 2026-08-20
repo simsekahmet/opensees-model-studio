@@ -6,7 +6,7 @@
  */
 
 import { unitsOf, fmt } from '../units.js';
-import { EDITABLE_DIMS } from '../model/sections.js';
+import { EDITABLE_DIMS, usesFibers } from '../model/sections.js';
 
 const MAX_ROWS = 600;
 
@@ -49,7 +49,7 @@ export function renderSections(root, s, model) {
 
   const note = document.createElement('p');
   note.className = 'tbl-note';
-  note.textContent = s.sectionKind === 'Fiber'
+  note.textContent = usesFibers(s)
     ? 'Fiber sections use the gross geometry; Iz and Iy above are reported for reference only.'
     : 'Iz and Iy include the cracked-section modifiers set in the Sections group.';
   root.append(note);

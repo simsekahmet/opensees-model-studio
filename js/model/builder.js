@@ -17,7 +17,7 @@
  */
 
 import { expandList } from '../state.js';
-import { allSections, sectionWithDims, EDITABLE_DIMS } from './sections.js';
+import { allSections, sectionWithDims, EDITABLE_DIMS, usesFibers } from './sections.js';
 import { ISOLATOR_TYPES } from './devices.js';
 
 const NODE_BASE = 10000;
@@ -396,16 +396,16 @@ export function buildModel(s) {
   if (s.massSource === 'none' && !s.elementMass && s.runModal) {
     warnings.push('No mass is defined anywhere, so the eigenvalue analysis cannot run. Enable nodal mass or element mass.');
   }
-  if (s.sectionKind === 'Fiber' && ['elasticBeamColumn', 'elasticTimoshenkoBeam'].includes(s.colElement)) {
+  if (usesFibers(s) && ['elasticBeamColumn', 'elasticTimoshenkoBeam'].includes(s.colElement)) {
     warnings.push('Columns use an elastic element, so the fiber section is ignored for them.');
   }
-  if (s.sectionKind === 'Fiber' && ['elasticBeamColumn', 'elasticTimoshenkoBeam'].includes(s.beamElement)) {
+  if (usesFibers(s) && ['elasticBeamColumn', 'elasticTimoshenkoBeam'].includes(s.beamElement)) {
     warnings.push('Beams use an elastic element, so the fiber section is ignored for them.');
   }
-  if (s.sectionKind === 'Fiber' && s.colShape === 'ISection') {
+  if (usesFibers(s) && s.colShape === 'ISection') {
     warnings.push('The I-section fiber mesh is generated as three rectangular patches without reinforcement layers.');
   }
-  if (s.matSystem === 'steel' && s.sectionKind === 'Fiber') {
+  if (s.matSystem === 'steel' && usesFibers(s)) {
     warnings.push('Steel fiber sections use the steel material for the whole cross-section; concrete parameters are ignored.');
   }
   for (const [name, v] of Object.entries({ 'Bay width X': spansX, 'Bay width Y': spansY, 'Story height': heights })) {

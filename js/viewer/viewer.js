@@ -320,31 +320,47 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
       const list = elements.filter((e) => e.kind === kind);
       if (!list.length) continue;
 
-      const geom = sectionGeometry(list[0].section);
-      const mat = new THREE.MeshLambertMaterial({ color: new THREE.Color(colorOf(kind)) });
-      const mesh = new THREE.InstancedMesh(geom, mat, list.length);
-      mesh.frustumCulled = false;
+      // One instanced mesh per distinct section, not per family: a member whose
+      // dimensions were edited in the inspector must be drawn at its own size.
+      const groups = new Map();
+      for (const e of list) {
+        const key = sectionKey(e.section);
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(e);
+      }
 
       const m = new THREE.Matrix4();
       const basis = new THREE.Matrix4();
 
-      list.forEach((e, n) => {
-        const [ax, ay, az] = basisOf(e);
-        basis.makeBasis(ax, ay, az);
-        m.copy(basis);
-        m.scale(new THREE.Vector3(e.length, 1, 1));
-        m.setPosition(
-          (e.p1[0] + e.p2[0]) / 2,
-          (e.p1[1] + e.p2[1]) / 2,
-          (e.p1[2] + e.p2[2]) / 2
-        );
-        mesh.setMatrixAt(n, m);
-      });
-      mesh.instanceMatrix.needsUpdate = true;
+      for (const group of groups.values()) {
+        const geom = sectionGeometry(group[0].section);
+        const mat = new THREE.MeshLambertMaterial({ color: new THREE.Color(colorOf(kind)) });
+        const mesh = new THREE.InstancedMesh(geom, mat, group.length);
+        mesh.frustumCulled = false;
 
-      gElements.add(mesh);
-      picks.push({ object: mesh, elements: list, mode: 'instance' });
+        group.forEach((e, n) => {
+          const [ax, ay, az] = basisOf(e);
+          basis.makeBasis(ax, ay, az);
+          m.copy(basis);
+          m.scale(new THREE.Vector3(e.length, 1, 1));
+          m.setPosition(
+            (e.p1[0] + e.p2[0]) / 2,
+            (e.p1[1] + e.p2[1]) / 2,
+            (e.p1[2] + e.p2[2]) / 2
+          );
+          mesh.setMatrixAt(n, m);
+        });
+        mesh.instanceMatrix.needsUpdate = true;
+
+        gElements.add(mesh);
+        picks.push({ object: mesh, elements: group, mode: 'instance' });
+      }
     }
+  }
+
+  /** Everything that changes the drawn prism. */
+  function sectionKey(sec) {
+    return `${sec.shape}|${sec.b}|${sec.h}|${sec.D ?? ''}|${sec.bf ?? ''}|${sec.tf ?? ''}|${sec.tw ?? ''}`;
   }
 
   /**

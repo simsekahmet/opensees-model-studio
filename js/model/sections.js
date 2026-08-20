@@ -6,6 +6,10 @@
  * Iz = ∫y²dA governs bending in the local x–y plane.
  */
 
+/** Formulations whose geometry is discretised into fibers. */
+export const FIBER_KINDS = ['Fiber', 'NDFiber', 'RCCircularSection'];
+export const usesFibers = (s) => FIBER_KINDS.includes(s.sectionKind);
+
 /* ───────────────────────────── primitives ───────────────────────────── */
 
 export function rectangle(b, h) {
@@ -79,7 +83,7 @@ export function sectionFor(s, family) {
   const E = s.matSystem === 'steel' ? num(s.Es) : num(s.Ec);
   const G = E / (2 * (1 + num(s.nu)));
   const mod = family === 'column' ? num(s.modCol) : num(s.modBeam);
-  const isFiber = s.sectionKind === 'Fiber';
+  const isFiber = usesFibers(s);
 
   return {
     family,
@@ -129,7 +133,7 @@ export function sectionWithDims(s, base, dims) {
       ? iSection(pick('h'), pick('bf'), pick('tf'), pick('tw'))
       : rectangle(pick('b'), pick('h'));
 
-  const isFiber = s.sectionKind === 'Fiber';
+  const isFiber = usesFibers(s);
   return {
     ...base,
     ...geom,

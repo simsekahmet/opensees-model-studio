@@ -10,6 +10,7 @@ import { unitsOf } from '../units.js';
 import {
   CONCRETE_MODELS, STEEL_MODELS, materialArgs, constName, matKey,
 } from '../model/materials.js';
+import { usesFibers } from '../model/sections.js';
 import { scriptFileName } from '../model/groundmotion.js';
 import {
   ISOLATOR_TYPES, DAMPER_TYPES, FRICTION_MODELS, devKey, devConst,
@@ -32,6 +33,9 @@ const ELEMENT_NAME = {
 
 const usesSection = (name) => name === 'forceBeamColumn' || name === 'dispBeamColumn';
 
+/** Tag a beam integration should reference, accounting for the Aggregator wrap. */
+const sectionRef = (s, tag) => (s.useAggregator ? tag + 20 : tag);
+
 export function generateScript(s, model, gm = null) {
   const u = unitsOf(s.unitSystem);
   const L = [];
@@ -45,7 +49,7 @@ export function generateScript(s, model, gm = null) {
   );
 
   const { column, beamX, beamY, shared } = model.sections;
-  const fiber = s.sectionKind === 'Fiber';
+  const fiber = usesFibers(s);
   const steelSystem = s.matSystem === 'steel';
   const isolated = !!s.useIsolation;
   const chevron = !!s.useDampers && s.damperConfig === 'chevron';
@@ -306,10 +310,12 @@ export function generateScript(s, model, gm = null) {
 
   /* ─────────────────────────────── sections ────────────────────────── */
   rule('5 — Sections');
+  if (s.sectionKind === 'NDFiber') emitNDMaterial(w, s, u);
+
   if (fiber) {
-    emitFiberSection(w, s, column, T.secCol, 'COL', steelSystem);
-    emitFiberSection(w, s, beamX, T.secBeamX, 'BX', steelSystem);
-    if (!shared) emitFiberSection(w, s, beamY, T.secBeamY, 'BY', steelSystem);
+    emitSectionOfKind(w, s, column, T.secCol, 'COL', steelSystem);
+    emitSectionOfKind(w, s, beamX, T.secBeamX, 'BX', steelSystem);
+    if (!shared) emitSectionOfKind(w, s, beamY, T.secBeamY, 'BY', steelSystem);
   } else {
     w(
       '# Elastic sections. The Ig modifiers below account for cracking.',
@@ -322,7 +328,7 @@ export function generateScript(s, model, gm = null) {
 
   for (const g of edited.groups) {
     w(`# Edited members — ${g.label}`);
-    if (fiber) emitFiberSection(w, s, g.section, g.secTag, g.prefix, steelSystem);
+    if (fiber) emitSectionOfKind(w, s, g.section, g.secTag, g.prefix, steelSystem);
     else {
       w(`ops.section('Elastic', ${g.secTag}, E_MOD, ${g.prefix}_A, ${g.prefix}_IZ, ${g.prefix}_IY, G_MOD, ${g.prefix}_J)`, '');
     }
@@ -343,15 +349,15 @@ export function generateScript(s, model, gm = null) {
   if (needInt) {
     rule('7 — Beam integration');
     if (usesSection(s.colElement)) {
-      w(`ops.beamIntegration(${py(s.integration)}, ${T.intCol}, ${T.secCol}, ${pi(s.numIntPts)})`);
+      w(`ops.beamIntegration(${py(s.integration)}, ${T.intCol}, ${sectionRef(s, T.secCol)}, ${pi(s.numIntPts)})`);
     }
     if (usesSection(s.beamElement)) {
-      w(`ops.beamIntegration(${py(s.integration)}, ${T.intBeamX}, ${T.secBeamX}, ${pi(s.numIntPts)})`);
-      w(`ops.beamIntegration(${py(s.integration)}, ${T.intBeamY}, ${shared ? T.secBeamX : T.secBeamY}, ${pi(s.numIntPts)})`);
+      w(`ops.beamIntegration(${py(s.integration)}, ${T.intBeamX}, ${sectionRef(s, T.secBeamX)}, ${pi(s.numIntPts)})`);
+      w(`ops.beamIntegration(${py(s.integration)}, ${T.intBeamY}, ${sectionRef(s, shared ? T.secBeamX : T.secBeamY)}, ${pi(s.numIntPts)})`);
     }
     for (const g of edited.groups) {
       if (!usesSection(g.family === 'column' ? s.colElement : s.beamElement)) continue;
-      w(`ops.beamIntegration(${py(s.integration)}, ${g.intTag}, ${g.secTag}, ${pi(s.numIntPts)})  # ${g.label}`);
+      w(`ops.beamIntegration(${py(s.integration)}, ${g.intTag}, ${sectionRef(s, g.secTag)}, ${pi(s.numIntPts)})  # ${g.label}`);
     }
     w('');
   }
@@ -1100,14 +1106,17 @@ function emitMaterialConstants(w, def, family, type, s) {
 
 /* ────────────────────────── fiber sections ──────────────────────────── */
 
-function emitFiberSection(w, s, sec, tag, prefix, steelSystem) {
+function emitFiberSection(w, s, sec, tag, prefix, steelSystem, nd = false) {
   const label = { COL: 'Column', BX: 'Beam — X', BY: 'Beam — Y' }[prefix];
-  const concrete = steelSystem ? T.matSteel : T.matCore;
-  const cover = steelSystem ? T.matSteel : T.matCover;
-  const gj = s.torsionStiff ? `, '-GJ', G_MOD * ${prefix}_J` : '';
+  // An NDFiber section is made of one nDMaterial throughout; a Fiber section
+  // distinguishes confined core, unconfined cover and reinforcement.
+  const concrete = nd ? 20 : steelSystem ? T.matSteel : T.matCore;
+  const cover = nd ? 20 : steelSystem ? T.matSteel : T.matCover;
+  const steel = nd ? 20 : T.matSteel;
+  const gj = !nd && s.torsionStiff ? `, '-GJ', G_MOD * ${prefix}_J` : '';
 
-  w(`# ${label} — fiber section ${tag}`);
-  w(`ops.section('Fiber', ${tag}${gj})`);
+  w(`# ${label} — ${nd ? 'NDFiber' : 'fiber'} section ${tag}`);
+  w(`ops.section(${nd ? "'NDFiber'" : "'Fiber'"}, ${tag}${gj})`);
 
   const f = sec.fiber;
 
@@ -1117,7 +1126,7 @@ function emitFiberSection(w, s, sec, tag, prefix, steelSystem) {
       `RC_${prefix} = R_${prefix} - ${pf(s.cover)}  # core radius`,
       `ops.patch('circ', ${concrete}, ${f.nfCircCore}, ${f.nfRadCore}, 0.0, 0.0, 0.0, RC_${prefix}, 0.0, 360.0)`,
       `ops.patch('circ', ${cover}, ${f.nfCircCover}, ${f.nfRadCover}, 0.0, 0.0, RC_${prefix}, R_${prefix}, 0.0, 360.0)`,
-      `ops.layer('circ', ${T.matSteel}, ${f.bars[0].n}, ${pf(f.bars[0].area)}, 0.0, 0.0, RC_${prefix}, 0.0, 360.0)`,
+      `ops.layer('circ', ${steel}, ${f.bars[0].n}, ${pf(f.bars[0].area)}, 0.0, 0.0, RC_${prefix}, 0.0, 360.0)`,
       ''
     );
     return;
@@ -1127,9 +1136,9 @@ function emitFiberSection(w, s, sec, tag, prefix, steelSystem) {
     w(
       `# Three rectangular patches: bottom flange, web, top flange.`,
       `HW_${prefix} = ${prefix}_H / 2.0 - ${pf(sec.tf)}`,
-      `ops.patch('rect', ${T.matSteel}, 2, 12, -${prefix}_H / 2.0, -${prefix}_B / 2.0, -HW_${prefix}, ${prefix}_B / 2.0)`,
-      `ops.patch('rect', ${T.matSteel}, 12, 2, -HW_${prefix}, ${pf(-sec.tw / 2)}, HW_${prefix}, ${pf(sec.tw / 2)})`,
-      `ops.patch('rect', ${T.matSteel}, 2, 12, HW_${prefix}, -${prefix}_B / 2.0, ${prefix}_H / 2.0, ${prefix}_B / 2.0)`,
+      `ops.patch('rect', ${steel}, 2, 12, -${prefix}_H / 2.0, -${prefix}_B / 2.0, -HW_${prefix}, ${prefix}_B / 2.0)`,
+      `ops.patch('rect', ${steel}, 12, 2, -HW_${prefix}, ${pf(-sec.tw / 2)}, HW_${prefix}, ${pf(sec.tw / 2)})`,
+      `ops.patch('rect', ${steel}, 2, 12, HW_${prefix}, -${prefix}_B / 2.0, ${prefix}_H / 2.0, ${prefix}_B / 2.0)`,
       ''
     );
     return;
@@ -1150,9 +1159,70 @@ function emitFiberSection(w, s, sec, tag, prefix, steelSystem) {
     const y = layer.y >= 0
       ? `YC_${prefix}${layer.sideOnly ? ` * ${pf(layer.y / (f.yc || 1))}` : ''}`
       : `-YC_${prefix}${layer.sideOnly ? ` * ${pf(Math.abs(layer.y) / (f.yc || 1))}` : ''}`;
-    w(`ops.layer('straight', ${T.matSteel}, ${pi(layer.n)}, ${pf(layer.area)}, ${y}, -ZC_${prefix}, ${y}, ZC_${prefix})`);
+    w(`ops.layer('straight', ${steel}, ${pi(layer.n)}, ${pf(layer.area)}, ${y}, -ZC_${prefix}, ${y}, ZC_${prefix})`);
   }
   w('');
+}
+
+/**
+ * Dispatches to the chosen fiber formulation. RCCircularSection is a built-in
+ * OpenSees helper that only describes a circular section, so anything else
+ * falls back to the general fiber build.
+ */
+function emitSectionOfKind(w, s, sec, tag, prefix, steelSystem) {
+  if (s.sectionKind === 'RCCircularSection' && sec.shape === 'Circular') {
+    emitRCCircular(w, s, sec, tag, prefix);
+  } else {
+    emitFiberSection(w, s, sec, tag, prefix, steelSystem, s.sectionKind === 'NDFiber');
+  }
+  if (s.useAggregator) emitAggregator(w, s, sec, tag, prefix);
+}
+
+/** The nDMaterial the NDFiber patches and layers are made of. */
+function emitNDMaterial(w, s, u) {
+  w(`# nDMaterial for the NDFiber sections — ${s.ndMaterial}`);
+  if (s.ndMaterial === 'J2Plasticity') {
+    w(
+      'K_BULK = E_MOD / (3.0 * (1.0 - 2.0 * NU))',
+      'G_SHEAR = E_MOD / (2.0 * (1.0 + NU))',
+      `ND_SIG0 = ${pf(s.ndSig0)}  # yield stress [${u.stress}]`,
+      `ND_HARD = ${pf(s.ndHard)}  # hardening modulus [${u.stress}]`,
+      "ops.nDMaterial('J2Plasticity', 20, K_BULK, G_SHEAR, ND_SIG0, ND_SIG0, 0.0, ND_HARD)",
+      ''
+    );
+  } else {
+    w("ops.nDMaterial('ElasticIsotropic', 20, E_MOD, NU)", '');
+  }
+}
+
+/**
+ * OpenSees builds the whole circular RC section — core, cover and the bar ring
+ * — from the geometry, so no explicit patches or layers are needed.
+ */
+function emitRCCircular(w, s, sec, tag, prefix) {
+  w(
+    `ops.section('RCCircularSection', ${tag}, ${T.matCore}, ${T.matCover}, ${T.matSteel},`,
+    `                                 ${prefix}_H, ${pf(s.cover)}, ${pf(s.colBarArea)},`,
+    `                                 ${pi(s.rcRingsCore)}, ${pi(s.rcRingsCover)}, ${pi(s.rcWedges)}, ${pi(s.rcNsteel)},`,
+    `                                 '-GJ', G_MOD * ${prefix}_J)`,
+    ''
+  );
+}
+
+/**
+ * Wraps a section with elastic shear and torsion responses. A fiber section
+ * has none of its own, so without this the member is rigid in shear.
+ */
+function emitAggregator(w, s, sec, baseTag, prefix) {
+  const agg = baseTag + 20;
+  w(
+    `# Shear and torsion aggregated onto section ${baseTag}`,
+    `ops.uniaxialMaterial('Elastic', ${agg * 10 + 1}, G_MOD * ${prefix}_A * ${pf(s.aggShearFactor)})`,
+    `ops.uniaxialMaterial('Elastic', ${agg * 10 + 2}, G_MOD * ${prefix}_J)`,
+    `ops.section('Aggregator', ${agg}, ${agg * 10 + 1}, 'Vy', ${agg * 10 + 1}, 'Vz', ${agg * 10 + 2}, 'T',`,
+    `            '-section', ${baseTag})`,
+    ''
+  );
 }
 
 /* ─────────────────────────── element arguments ──────────────────────── */

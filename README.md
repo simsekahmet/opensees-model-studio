@@ -43,8 +43,18 @@ Everything you set in the sidebar maps onto a real OpenSeesPy command:
 
 - **Materials** — `Elastic`, `Concrete01`, `Concrete02`, `Concrete04`, `ElasticPP`,
   `Steel01`, `Steel02`, `Hysteretic`, with Mander confinement applied to the core fibers.
-- **Sections** — `section('Elastic', …)` with cracked-section modifiers, or `Fiber`
-  sections built from `patch` and `layer` calls for rectangular, circular and I shapes.
+- **Sections** — `Elastic` with cracked-section modifiers, `Fiber` built from `patch`
+  and `layer` calls, `NDFiber` over an `ElasticIsotropic` or `J2Plasticity` nDMaterial,
+  and the built-in `RCCircularSection`. Any of them can be wrapped in a
+  `section('Aggregator', …)` that adds elastic shear and torsion. `Elastic` keeps the
+  material response linear; the others give material nonlinearity, while geometric
+  nonlinearity is set separately by the transformation.
+
+  The remaining documented sections are deliberately not offered: `WFSection2d`,
+  `RCSection2d`, `Uniaxial` and `Bidirectional` are two-dimensional and cannot carry
+  an ndm 3 frame member, `ElasticMembranePlateSection`, `PlateFiber` and `LayeredShell`
+  are shell sections, `Isolator2spring` belongs to an isolator element and `Pipe` to
+  the pipe elements.
 - **Elements** — `elasticBeamColumn`, `forceBeamColumn`, `dispBeamColumn`,
   `ElasticTimoshenkoBeam`, with `Lobatto` / `Legendre` / `NewtonCotes` / `Radau` /
   `Trapezoidal` integration and `Linear` / `PDelta` / `Corotational` transformations.
@@ -115,7 +125,7 @@ beam Y  300000 + level · 1000 + index + 1
 ## Verification
 
 Every generated script is executed against the real `openseespy` before release.
-The current run is 89 model variants — one per material model, per isolator, per
+The current run is 97 model variants — one per material model, per isolator, per
 friction model, per damper type and configuration, per static and transient
 integrator, per constraint handler, plus moved joints and edited members: **0
 script errors**.

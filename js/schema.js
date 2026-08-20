@@ -110,9 +110,43 @@ export const SCHEMA = [
     id: 'sections', title: 'Sections',
     fields: [
       { id: 'sectionKind', type: 'select', label: 'Section formulation', d: 'Elastic', options: [
-        { value: 'Elastic', label: 'Elastic — section(\'Elastic\', …)' },
-        { value: 'Fiber',   label: 'Fiber — patches & layers' },
-      ]},
+        { value: 'Elastic', label: 'Elastic — linear, section(Elastic)' },
+        { value: 'Fiber',   label: 'Fiber — uniaxial fibers, patches & layers' },
+        { value: 'NDFiber', label: 'NDFiber — fibers of an nDMaterial' },
+        { value: 'RCCircularSection', label: 'RCCircularSection — built-in circular RC' },
+      ],
+        hint: 'Elastic keeps the material response linear. The others give material '
+            + 'nonlinearity; geometric nonlinearity is separate, set by the transformation '
+            + 'in the Elements group.' },
+      { kind: 'note-line', showIf: (s) => s.sectionKind === 'RCCircularSection',
+        label: 'RCCircularSection applies to circular members only. Rectangular and '
+             + 'I-shaped members fall back to a Fiber section.' },
+      { id: 'ndMaterial', type: 'select', label: 'nDMaterial for the fibers', d: 'ElasticIsotropic',
+        showIf: (s) => s.sectionKind === 'NDFiber', options: [
+          { value: 'ElasticIsotropic', label: 'ElasticIsotropic' },
+          { value: 'J2Plasticity', label: 'J2Plasticity' },
+        ]},
+      { id: 'ndSig0', type: 'number', label: 'sigma0 — yield stress', unit: 'stress', half: true,
+        showIf: (s) => s.sectionKind === 'NDFiber' && s.ndMaterial === 'J2Plasticity',
+        d: { 'kN-m': 20000, 'N-mm': 20, 'kip-in': 2.9 } },
+      { id: 'ndHard', type: 'number', label: 'H — hardening modulus', unit: 'stress', half: true,
+        showIf: (s) => s.sectionKind === 'NDFiber' && s.ndMaterial === 'J2Plasticity',
+        d: { 'kN-m': 100000, 'N-mm': 100, 'kip-in': 14.5 } },
+      { id: 'rcRingsCore', type: 'number', label: 'Core rings', d: 8, min: 2, max: 40, step: 1, half: true,
+        showIf: (s) => s.sectionKind === 'RCCircularSection' },
+      { id: 'rcRingsCover', type: 'number', label: 'Cover rings', d: 2, min: 1, max: 20, step: 1, half: true,
+        showIf: (s) => s.sectionKind === 'RCCircularSection' },
+      { id: 'rcWedges', type: 'number', label: 'Wedges', d: 16, min: 4, max: 60, step: 1, half: true,
+        showIf: (s) => s.sectionKind === 'RCCircularSection' },
+      { id: 'rcNsteel', type: 'number', label: 'Longitudinal bars', d: 12, min: 4, max: 60, step: 1, half: true,
+        showIf: (s) => s.sectionKind === 'RCCircularSection' },
+      { id: 'useAggregator', type: 'check', d: false,
+        label: 'Add shear and torsion (section Aggregator)',
+        hint: 'A fiber section carries no shear or torsional stiffness of its own. This wraps '
+            + 'it with elastic Vy, Vz and T responses.' },
+      { id: 'aggShearFactor', type: 'number', label: 'Shear area factor', step: 0.05, d: 0.833,
+        showIf: (s) => s.useAggregator,
+        hint: 'Av = factor x A, used for the Vy and Vz stiffness.' },
 
       { kind: 'sub', label: 'Columns' },
       { id: 'colShape', type: 'select', label: 'Column shape', d: 'Rectangular', options: [
