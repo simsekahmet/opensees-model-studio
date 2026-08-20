@@ -496,6 +496,7 @@ function deviceFields(group, selectKey, visible) {
   const out = [];
   for (const [type, def] of Object.entries(catalogueOf(group))) {
     const shown = (s) => visible(s) && s[selectKey] === type;
+    if (def.note) out.push({ kind: 'note-line', label: def.note, showIf: shown });
     for (const p of def.params) {
       out.push({
         id: devKey(group, type, p.key),

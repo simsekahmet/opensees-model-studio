@@ -413,7 +413,10 @@ html[data-theme="light"] .icon-moon { display: none; }
 
 .scene-host { position: relative; flex: 1; min-height: 0; overflow: hidden; }
 #scene-canvas { position: absolute; inset: 0; }
-#scene-canvas canvas { display: block; cursor: crosshair; }
+/* The renderer writes the canvas CSS size inline; these are the fallback
+   for the moment before the first resize, and stop the canvas from ever
+   laying out at its backing-store size on a scaled display. */
+#scene-canvas canvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
 
 /* Rubber band: solid outline dragging right (window), dashed left (crossing). */
 .rubber-band {

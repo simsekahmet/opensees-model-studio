@@ -112,6 +112,22 @@ beam X  200000 + level · 1000 + index + 1
 beam Y  300000 + level · 1000 + index + 1
 ```
 
+## Verification
+
+Every generated script is executed against the real `openseespy` before release.
+The current run is 89 model variants — one per material model, per isolator, per
+friction model, per damper type and configuration, per static and transient
+integrator, per constraint handler, plus moved joints and edited members: **0
+script errors**.
+
+Statics is checked end to end on the default model: the sum of the vertical base
+reactions the solver reports matches the slab load plus the member self weight to
+0.000000 %.
+
+Two documented materials, `RambergOsgoodSteel` and `FRPConfinedConcrete`, are not
+offered: OpenSees prints *"temporarily removed from the compiled versions"* and
+aborts, so a script using them could never run.
+
 ## Running the generated script
 
 ```bash

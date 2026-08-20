@@ -643,7 +643,8 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
     ortho.position.copy(center).add(dir.multiplyScalar(dist));
     ortho.lookAt(center);
 
-    const aspect = Math.max(host.clientWidth / Math.max(host.clientHeight, 1), 1e-3);
+    const box = host.getBoundingClientRect();
+    const aspect = Math.max((box.width || 1) / Math.max(box.height || 1, 1), 1e-3);
     const half = radius * 1.15;
     ortho.left = -half * aspect;
     ortho.right = half * aspect;
@@ -862,9 +863,17 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
   resizeObserver.observe(host);
 
   function resize() {
-    const w = host.clientWidth || 1;
-    const h = host.clientHeight || 1;
-    renderer.setSize(w, h, false);
+    // Measured rather than read from clientWidth so fractional layout sizes on
+    // a scaled display are carried through exactly.
+    const rect = host.getBoundingClientRect();
+    const w = rect.width || host.clientWidth || 1;
+    const h = rect.height || host.clientHeight || 1;
+
+    // setSize must be allowed to write the canvas CSS size. Suppressing it
+    // leaves the canvas laid out at its backing-store size, so on any display
+    // with a device pixel ratio other than 1 the WebGL view ends up a
+    // different size from the label layer and every label looks displaced.
+    renderer.setSize(w, h);
     labelRenderer.setSize(w, h);
     perspective.aspect = w / h;
     perspective.updateProjectionMatrix();

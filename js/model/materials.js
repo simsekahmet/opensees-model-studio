@@ -184,29 +184,6 @@ export const CONCRETE_MODELS = {
     ],
   },
 
-  FRPConfinedConcrete: {
-    label: 'FRPConfinedConcrete — Megalooikonomou et al.',
-    params: [
-      { key: 'fpc1', label: "f′c1", unit: 'stress', d: FPC, half: true },
-      { key: 'fpc2', label: "f′c2", unit: 'stress', d: FPC, half: true },
-      { key: 'epsc0', label: 'εc0', d: -0.002, step: 0.0001, half: true },
-      { key: 'D', label: 'Diameter', unit: 'length', d: L(0.6, 600, 24), half: true },
-      { key: 'c', label: 'Cover', unit: 'length', d: L(0.04, 40, 1.6), half: true },
-      { key: 'Ej', label: 'Ej — FRP modulus', unit: 'stress', d: S(230000000, 230000, 33000), half: true },
-      { key: 'Sj', label: 'Sj — jacket spacing', unit: 'length', d: L(0.1, 100, 4), half: true },
-      { key: 'tj', label: 'tj — jacket thickness', unit: 'length', d: L(0.001, 1, 0.04), half: true },
-      { key: 'eju', label: 'εju — rupture strain', d: 0.015, step: 0.001, half: true },
-      { key: 'S', label: 'S — hoop spacing', unit: 'length', d: L(0.1, 100, 4), half: true },
-      { key: 'fyl', label: 'fyl — long. yield', unit: 'stress', d: FY, half: true },
-      { key: 'fyh', label: 'fyh — hoop yield', unit: 'stress', d: FY, half: true },
-      { key: 'dlong', label: 'Long. bar dia.', unit: 'length', d: L(0.025, 25, 1.0), half: true },
-      { key: 'dtrans', label: 'Hoop dia.', unit: 'length', d: L(0.010, 10, 0.4), half: true },
-      { key: 'Es', label: 'Es', unit: 'stress', d: ES, half: true },
-      { key: 'nu0', label: 'ν0', d: 0.2, step: 0.01, half: true },
-      { key: 'k', label: 'k — confinement factor', d: 0.5, step: 0.05, half: true },
-      { key: 'useBuck', label: 'Bar buckling', d: 1, step: 1, half: true },
-    ],
-  },
 
   FRPConfinedConcrete02: {
     label: 'FRPConfinedConcrete02 — circular jacket',
@@ -221,7 +198,7 @@ export const CONCRETE_MODELS = {
       { key: 'R', label: 'Column radius', unit: 'length', d: L(0.3, 300, 12), half: true },
       { key: 'ft', label: 'ft', unit: 'stress', d: FT, half: true },
       { key: 'Ets', label: 'Ets', unit: 'stress', d: ETS, half: true },
-      { key: 'Unit', label: 'Unit flag (1 = SI, 0 = US)', d: 1, step: 1 },
+      { key: 'Unit', label: 'Unit flag (1 = SI, 0 = US)', d: 1, step: 1 , int: true },
     ],
   },
 
@@ -296,7 +273,7 @@ export const CONCRETE_MODELS = {
       { key: 'phida', label: 'φda', d: 1.5, step: 0.1, half: true },
       { key: 'phidb', label: 'φdb', d: 1.0, step: 0.1, half: true },
       { key: 'tcast', label: 'tcast [days]', d: 2.0, step: 1, half: true },
-      { key: 'cem', label: 'cem — cement class', d: 1.0, step: 1, half: true },
+      { key: 'cem', label: 'cem — cement class', d: 1.0, step: 1, half: true , int: true },
     ],
   },
 
@@ -320,7 +297,7 @@ export const CONCRETE_MODELS = {
       { key: 'phida', label: 'φda', d: 1.5, step: 0.1, half: true },
       { key: 'phidb', label: 'φdb', d: 1.0, step: 0.1, half: true },
       { key: 'tcast', label: 'tcast [days]', d: 2.0, step: 1, half: true },
-      { key: 'cem', label: 'cem — cement class', d: 1.0, step: 1, half: true },
+      { key: 'cem', label: 'cem — cement class', d: 1.0, step: 1, half: true , int: true },
     ],
   },
 };
@@ -431,15 +408,6 @@ export const STEEL_MODELS = {
     ],
   },
 
-  RambergOsgoodSteel: {
-    label: 'RambergOsgoodSteel',
-    params: [
-      { key: 'fy', label: 'fy', unit: 'stress', d: FY, half: true },
-      { key: 'E0', label: 'E0', unit: 'stress', d: ES, half: true },
-      { key: 'a', label: 'a — yield offset', d: 0.002, step: 0.0001, half: true },
-      { key: 'n', label: 'n — transition', d: 10.0, step: 0.5, half: true },
-    ],
-  },
 
   SteelMPF: {
     label: 'SteelMPF — asymmetric Menegotto–Pinto',

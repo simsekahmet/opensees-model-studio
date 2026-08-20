@@ -18,6 +18,7 @@
 
 import { expandList } from '../state.js';
 import { allSections, sectionWithDims, EDITABLE_DIMS } from './sections.js';
+import { ISOLATOR_TYPES } from './devices.js';
 
 const NODE_BASE = 10000;
 const MASTER_OFFSET = 9999;
@@ -377,6 +378,11 @@ export function buildModel(s) {
     warnings.push(`${movedTags.length} joint${movedTags.length > 1 ? 's have' : ' has'} been moved off the grid. `
       + 'Member lengths follow the moved joints, but slab loads and tributary masses are still '
       + 'computed from the nominal bay spacing.');
+  }
+  if (isolated && ISOLATOR_TYPES[s.isolatorType]?.partialDOF) {
+    warnings.push(`${s.isolatorType} carries shear only — it supplies no vertical or torsional `
+      + 'stiffness, so the isolation level has a zero-energy mode and the analysis will not '
+      + 'converge on its own. Use a bearing that takes -P, -T, -My and -Mz, or add a companion element.');
   }
   if (isolated && s.rigidDiaphragm) {
     warnings.push('Rigid diaphragms and base isolation are both on; the isolation level itself has no diaphragm.');

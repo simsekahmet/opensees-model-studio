@@ -666,6 +666,13 @@ function emitDevices(w, s, model, u, isolated) {
     const def = ISOLATOR_TYPES[s.isolatorType];
 
     w(`# ${def.label}`);
+    if (def.partialDOF) {
+      w(
+        '# NOTE: this bearing carries shear only. It supplies no vertical or',
+        '# torsional stiffness, so the isolation level has a zero-energy mode',
+        '# unless a companion element restrains the remaining directions.'
+      );
+    }
     emitDeviceConstants(w, def, 'iso', s.isolatorType, s);
 
     if (def.friction) {
@@ -686,7 +693,7 @@ function emitDevices(w, s, model, u, isolated) {
       );
     }
 
-    if (def.aux) {
+    if (def.aux || def.needsAuxMaterials) {
       w(
         '# Bearing behaviour outside the shear plane.',
         `ISO_KV = ${pf(s.isoKv)}  # vertical [${u.stiffness}]`,
@@ -744,7 +751,8 @@ function deviceArgs(def, group) {
 function emitDeviceConstants(w, def, group, type, s) {
   const width = Math.max(...def.params.map((p) => devConst(group, p.key).length));
   for (const p of def.params) {
-    w(`${devConst(group, p.key).padEnd(width)} = ${pf(s[devKey(group, type, p.key)])}  # ${p.label}`);
+    const value = s[devKey(group, type, p.key)];
+    w(`${devConst(group, p.key).padEnd(width)} = ${p.int ? pi(value) : pf(value)}  # ${p.label}`);
   }
   w('');
 }
@@ -819,7 +827,15 @@ function emitGravity(w, s) {
     "ops.analysis('Static')",
     '',
     'if ops.analyze(N_STEPS) != 0:',
-    "    raise RuntimeError('Gravity analysis failed to converge.')",
+    "    print('Gravity did not converge; retrying with smaller steps.')",
+    '    ops.setTime(0.0)',
+    '    ops.wipeAnalysis()',
+    '    set_solver()',
+    "    ops.algorithm('ModifiedNewton', '-initial')",
+    "    ops.integrator('LoadControl', 1.0 / (N_STEPS * 20))",
+    "    ops.analysis('Static')",
+    '    if ops.analyze(N_STEPS * 20) != 0:',
+    "        raise RuntimeError('Gravity analysis failed to converge.')",
     '',
     "print(f'Gravity complete: {len(ops.getNodeTags())} nodes, {len(ops.getEleTags())} elements.')",
     '',
@@ -833,12 +849,13 @@ function emitModal(w, s) {
   w(
     '# ── Modal ────────────────────────────────────────────────────────────',
     `eigenvalues = ops.eigen(${py(s.eigenSolver)}, N_MODES)`,
-    'periods = [2.0 * math.pi / math.sqrt(lam) for lam in eigenvalues]',
+    'periods = [2.0 * math.pi / math.sqrt(lam) if lam > 0.0 else 0.0 for lam in eigenvalues]',
     '',
     "print('\\nMode      Period        Frequency')",
     "print('-' * 38)",
     'for n, period in enumerate(periods, start=1):',
-    "    print(f'{n:>4}   {period:>10.4f} s   {1.0 / period:>8.4f} Hz')",
+    "    freq = 1.0 / period if period > 0.0 else float('inf')",
+    "    print(f'{n:>4}   {period:>10.4f} s   {freq:>8.4f} Hz')",
     ''
   );
   if (s.useRecorders) {
@@ -1075,7 +1092,7 @@ function emitMaterialConstants(w, def, family, type, s) {
   const width = Math.max(...def.params.map((p) => constName(family, p.key).length));
   for (const p of def.params) {
     const value = s[matKey(family, type, p.key)];
-    const literal = p.options ? py(value) : pf(value);
+    const literal = p.options ? py(value) : p.int ? pi(value) : pf(value);
     w(`${constName(family, p.key).padEnd(width)} = ${literal}  # ${p.label}`);
   }
   w('');

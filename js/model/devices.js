@@ -18,8 +18,8 @@
 
 const S = (kNm, Nmm, kipin) => ({ 'kN-m': kNm, 'N-mm': Nmm, 'kip-in': kipin });
 
-const KINIT = S(15000, 15000, 85);          // shear stiffness
-const QD = S(100, 100000, 22);              // characteristic strength
+const KINIT = S(2500, 2500, 14.3);          // shear stiffness, ~2.5 s isolated period
+const QD = S(50, 50000, 11);                // characteristic strength
 const GR = S(700, 0.7, 0.1);                // rubber shear modulus
 const KBULK = S(2000000, 2000, 290);        // rubber bulk modulus
 const CD = S(1000, 1e6, 220);               // damper coefficient
@@ -125,8 +125,10 @@ export const ISOLATOR_TYPES = {
   TripleFrictionPendulum: {
     label: 'TripleFrictionPendulum — three sliding surfaces',
     friction: 3,
-    // This element takes its four material tags positionally, not behind flags.
+    // This element takes its four material tags positionally, not behind flags,
+    // but it still needs them defined.
     materialsPositional: ['vert', 'rotZ', 'rotX', 'rotY'],
+    needsAuxMaterials: true,
     params: [
       { key: 'L1', label: 'L1', unit: 'length', d: S(0.4, 400, 16), half: true },
       { key: 'L2', label: 'L2', unit: 'length', d: S(1.5, 1500, 60), half: true },
@@ -173,6 +175,8 @@ export const ISOLATOR_TYPES = {
 
   ElastomericX: {
     label: 'ElastomericX — rubber bearing, geometry based',
+    partialDOF: true,
+    note: 'Carries shear only — it supplies no vertical or torsional stiffness, so on its own it leaves the isolation level with a zero-energy mode. Pair it with a companion element, or use one of the bearings that take -P, -T, -My and -Mz.',
     params: [
       { key: 'Fy', label: 'Fy — yield force', unit: 'force', d: QD, half: true },
       { key: 'alpha', label: 'α — hardening ratio', d: 0.05, step: 0.005, half: true },
@@ -182,12 +186,14 @@ export const ISOLATOR_TYPES = {
       { key: 'D2', label: 'D2 — outer diameter', unit: 'length', d: S(0.7, 700, 28), half: true },
       { key: 'ts', label: 'ts — steel shim thickness', unit: 'length', d: S(0.003, 3, 0.12), half: true },
       { key: 'tr', label: 'tr — single rubber layer', unit: 'length', d: S(0.010, 10, 0.4), half: true },
-      { key: 'n', label: 'n — rubber layers', d: 20, step: 1, half: true },
+      { key: 'n', label: 'n — rubber layers', d: 20, step: 1, int: true, half: true },
     ],
   },
 
   LeadRubberX: {
     label: 'LeadRubberX — lead rubber bearing, geometry based',
+    partialDOF: true,
+    note: 'Carries shear only — it supplies no vertical or torsional stiffness, so on its own it leaves the isolation level with a zero-energy mode. Pair it with a companion element, or use one of the bearings that take -P, -T, -My and -Mz.',
     params: [
       { key: 'Fy', label: 'Fy — yield force', unit: 'force', d: QD, half: true },
       { key: 'alpha', label: 'α — hardening ratio', d: 0.05, step: 0.005, half: true },
@@ -197,12 +203,14 @@ export const ISOLATOR_TYPES = {
       { key: 'D2', label: 'D2 — outer diameter', unit: 'length', d: S(0.7, 700, 28), half: true },
       { key: 'ts', label: 'ts — steel shim thickness', unit: 'length', d: S(0.003, 3, 0.12), half: true },
       { key: 'tr', label: 'tr — single rubber layer', unit: 'length', d: S(0.010, 10, 0.4), half: true },
-      { key: 'n', label: 'n — rubber layers', d: 20, step: 1, half: true },
+      { key: 'n', label: 'n — rubber layers', d: 20, step: 1, int: true, half: true },
     ],
   },
 
   HDR: {
     label: 'HDR — high damping rubber bearing',
+    partialDOF: true,
+    note: 'Carries shear only — it supplies no vertical or torsional stiffness, so on its own it leaves the isolation level with a zero-energy mode. Pair it with a companion element, or use one of the bearings that take -P, -T, -My and -Mz.',
     params: [
       { key: 'Gr', label: 'Gr — shear modulus', unit: 'stress', d: GR, half: true },
       { key: 'Kbulk', label: 'Kbulk', unit: 'stress', d: KBULK, half: true },
@@ -210,7 +218,7 @@ export const ISOLATOR_TYPES = {
       { key: 'D2', label: 'D2 — outer diameter', unit: 'length', d: S(0.7, 700, 28), half: true },
       { key: 'ts', label: 'ts', unit: 'length', d: S(0.003, 3, 0.12), half: true },
       { key: 'tr', label: 'tr', unit: 'length', d: S(0.010, 10, 0.4), half: true },
-      { key: 'n', label: 'n — rubber layers', d: 20, step: 1, half: true },
+      { key: 'n', label: 'n — rubber layers', d: 20, step: 1, int: true, half: true },
       { key: 'a1', label: 'a1', d: 0.84, step: 0.01, half: true },
       { key: 'a2', label: 'a2', d: 5.0, step: 0.1, half: true },
       { key: 'a3', label: 'a3', d: 0.0, step: 0.1, half: true },
@@ -226,12 +234,14 @@ export const ISOLATOR_TYPES = {
 
   multipleShearSpring: {
     label: 'multipleShearSpring — radial spring set',
+    partialDOF: true,
+    note: 'Carries shear only — it supplies no vertical or torsional stiffness, so on its own it leaves the isolation level with a zero-energy mode. Pair it with a companion element, or use one of the bearings that take -P, -T, -My and -Mz.',
     // The element carries one shear spring material, emitted as a bilinear
     // Steel01 built from the two properties below.
     matFlag: '-mat',
     springMaterial: { qd: 'qd', kInit: 'kInit', alpha: 'alpha' },
     params: [
-      { key: 'nSpring', label: 'Number of springs', d: 8, step: 1 },
+      { key: 'nSpring', label: 'Number of springs', d: 8, step: 1, int: true },
       { key: 'qd', label: 'qd — spring yield force', unit: 'force', d: QD, half: true },
       { key: 'kInit', label: 'kInit — spring stiffness', unit: 'stiffness', d: KINIT, half: true },
       { key: 'alpha', label: 'α — hardening ratio', d: 0.05, step: 0.005 },
@@ -242,8 +252,10 @@ export const ISOLATOR_TYPES = {
 
   YamamotoBiaxialHDR: {
     label: 'YamamotoBiaxialHDR — biaxial high damping rubber',
+    partialDOF: true,
+    note: 'Carries shear only — it supplies no vertical or torsional stiffness, so on its own it leaves the isolation level with a zero-energy mode. Pair it with a companion element, or use one of the bearings that take -P, -T, -My and -Mz.',
     params: [
-      { key: 'Tp', label: 'Tp — rubber type (1)', d: 1, step: 1, half: true },
+      { key: 'Tp', label: 'Tp — rubber type (1)', d: 1, step: 1, int: true, half: true },
       { key: 'DDo', label: 'DDo — outer diameter', unit: 'length', d: S(0.7, 700, 28), half: true },
       { key: 'DDi', label: 'DDi — inner diameter', unit: 'length', d: S(0.0, 0, 0), half: true },
       { key: 'Hr', label: 'Hr — total rubber height', unit: 'length', d: S(0.2, 200, 8), half: true },
