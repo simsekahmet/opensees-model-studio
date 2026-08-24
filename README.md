@@ -16,7 +16,7 @@ tables, and a runnable `.py` script — all from a static page.
 | **3D Model** | Orbitable model in stick or extruded mode, with node and element labels, supports, grid and dimension lines. Click any member to inspect it. |
 | **Plan** | Orthographic floor plan of any selected story. |
 | **Elevation** | Any X–Z or Y–Z frame line, in isolation. |
-| **Sections** | Scaled cross-section drawings with rebar layout, dimensions and section properties. |
+| **Sections** | Scaled cross-section drawings with rebar layout, dimensions and section properties — including any section created by editing members, drawn the same way and listing the members that carry it. |
 | **Model Data** | Story, element and node tables — tags, coordinates, restraints, lengths, section sizes, line loads and masses. |
 | **Python Code** | The generated OpenSeesPy script, syntax highlighted, ready to copy or download. |
 

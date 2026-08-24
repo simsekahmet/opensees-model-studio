@@ -3,3 +3,6 @@
 __pycache__/
 .DS_Store
 Thumbs.db
+
+# Local editor and tooling config
+.claude/

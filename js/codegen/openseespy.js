@@ -10,7 +10,7 @@ import { unitsOf } from '../units.js';
 import {
   CONCRETE_MODELS, STEEL_MODELS, materialArgs, constName, matKey,
 } from '../model/materials.js';
-import { usesFibers } from '../model/sections.js';
+import { usesFibers, editedSectionGroups } from '../model/sections.js';
 import { scriptFileName } from '../model/groundmotion.js';
 import {
   ISOLATOR_TYPES, DAMPER_TYPES, FRICTION_MODELS, devKey, devConst,
@@ -601,35 +601,20 @@ const transfOf = (kind) =>
  * groups the identical ones, so twenty columns resized the same way share one
  * section, one integration and one set of constants.
  */
+/**
+ * The sections that per-member edits created, with the tags and constant
+ * prefixes the script needs. The grouping itself is shared with the Sections
+ * tab, so the drawing and the script can never disagree.
+ */
 function groupEdits(model) {
-  const byKey = new Map();
-
-  for (const e of model.elements) {
-    if (!e.overridden || e.section.shape === 'Device') continue;
-    const sec = e.section;
-    const key = `${e.kind}|${sec.shape}|${sec.b}|${sec.h}|${sec.D ?? ''}|${sec.tf ?? ''}|${sec.tw ?? ''}`;
-    if (!byKey.has(key)) byKey.set(key, { family: e.kind, section: sec, elements: [] });
-    byKey.get(key).elements.push(e);
-  }
-
-  const groups = [...byKey.values()]
-    // Only a genuine dimension change earns its own section; a member edited
-    // for its load alone keeps the family section.
-    .filter((g) => g.elements.some((e) => e.section !== familySection(model, e.kind)))
-    .map((g, n) => ({
-      ...g,
-      prefix: `OV${n + 1}`,
-      secTag: 500 + n,
-      intTag: 500 + n,
-      label: `${g.elements.length} × ${g.family} ${dimsLabel(g.section)}`,
-    }));
-
+  const groups = editedSectionGroups(model).map((g, n) => ({
+    ...g,
+    prefix: `OV${n + 1}`,
+    secTag: 500 + n,
+    intTag: 500 + n,
+    label: `${g.elements.length} × ${g.family} ${dimsLabel(g.section)}`,
+  }));
   return { groups, tags: groups.flatMap((g) => g.elements.map((e) => e.tag)) };
-}
-
-function familySection(model, kind) {
-  const { column, beamX, beamY } = model.sections;
-  return kind === 'column' ? column : kind === 'beamX' ? beamX : beamY;
 }
 
 function dimsLabel(sec) {

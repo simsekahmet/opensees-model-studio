@@ -6,7 +6,7 @@
  */
 
 import { unitsOf, fmt } from '../units.js';
-import { EDITABLE_DIMS, usesFibers } from '../model/sections.js';
+import { EDITABLE_DIMS, usesFibers, editedSectionGroups } from '../model/sections.js';
 
 const MAX_ROWS = 600;
 
@@ -53,6 +53,47 @@ export function renderSections(root, s, model) {
     ? 'Fiber sections use the gross geometry; Iz and Iy above are reported for reference only.'
     : 'Iz and Iy include the cracked-section modifiers set in the Sections group.';
   root.append(note);
+
+  renderEditedSections(root, s, model, u);
+}
+
+/**
+ * Sections that exist only because members were edited in the inspector. They
+ * are drawn and tabulated exactly like the model-wide ones, and each card says
+ * which members carry it.
+ */
+function renderEditedSections(root, s, model, u) {
+  const groups = editedSectionGroups(model);
+  if (!groups.length) return;
+
+  root.append(heading(`Sections from member edits — ${groups.length}`));
+
+  const grid = document.createElement('div');
+  grid.className = 'card-grid';
+  for (const g of groups) {
+    const named = { ...g.section, name: `${FAMILY[g.family]} — ${g.elements.length} member${g.elements.length > 1 ? 's' : ''}` };
+    const card = sectionCard(named, s, u, false);
+
+    const tags = document.createElement('p');
+    tags.className = 'tbl-note';
+    const shown = g.elements.slice(0, 12).map((e) => e.tag).join(', ');
+    tags.textContent = `Members: ${shown}${g.elements.length > 12 ? `, +${g.elements.length - 12} more` : ''}`;
+    card.append(tags);
+
+    grid.append(card);
+  }
+  root.append(grid);
+
+  root.append(wrapTable(table(
+    ['Section', 'Shape', `b [${u.length}]`, `h [${u.length}]`, `A [${u.area}]`,
+     `Iz [${u.inertia}]`, `Iy [${u.inertia}]`, `J [${u.inertia}]`, 'Members'],
+    groups.map((g) => [
+      FAMILY[g.family],
+      g.section.shape, fmt(g.section.b), fmt(g.section.h), fmt(g.section.A),
+      fmt(g.section.IzEff), fmt(g.section.IyEff), fmt(g.section.J), String(g.elements.length),
+    ]),
+    0
+  )));
 }
 
 function sectionCard(sec, s, u, shared) {

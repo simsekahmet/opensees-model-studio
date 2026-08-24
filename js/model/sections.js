@@ -209,6 +209,37 @@ function rectBarRing(nY, nZ, yc, zc, area) {
   return layers;
 }
 
+
+/* ─────────────────────── sections made by member edits ──────────────── */
+
+/** Everything that makes two sections different to look at and to analyse. */
+export function sectionSignature(sec) {
+  return [sec.shape, sec.b, sec.h, sec.D ?? '', sec.bf ?? '', sec.tf ?? '', sec.tw ?? ''].join('|');
+}
+
+/** The section a member would have without any per-member edit. */
+export function familySection(model, kind) {
+  const { column, beamX, beamY } = model.sections;
+  return kind === 'column' ? column : kind === 'beamX' ? beamX : beamY;
+}
+
+/**
+ * Sections that exist only because members were edited in the inspector,
+ * grouped so twenty columns resized the same way appear once. A member edited
+ * for its load alone keeps the family section and is not listed here.
+ */
+export function editedSectionGroups(model) {
+  const byKey = new Map();
+  for (const e of model.elements) {
+    if (!e.overridden || e.section.shape === 'Device') continue;
+    if (e.section === familySection(model, e.kind)) continue;
+    const key = `${e.kind}|${sectionSignature(e.section)}`;
+    if (!byKey.has(key)) byKey.set(key, { family: e.kind, section: e.section, elements: [] });
+    byKey.get(key).elements.push(e);
+  }
+  return [...byKey.values()];
+}
+
 /* ──────────────────────────────── util ─────────────────────────────── */
 
 function num(v) {
