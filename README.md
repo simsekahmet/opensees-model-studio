@@ -5,7 +5,7 @@ Define a space frame with forms instead of code, press **Compile**, and get a 3D
 model, floor plans, elevations, dimensioned cross-sections, full node and element
 tables, and a runnable `.py` script — all from a static page.
 
-**Live app:** https://simsekahmet.github.io/opensees-model-studio/
+**Live app:** https://opensees-model-studio.asimsek23.workers.dev/
 
 ---
 
@@ -66,8 +66,9 @@ Everything you set in the sidebar maps onto a real OpenSeesPy command:
 
 ## Architecture
 
-The page is a plain ES-module app with no build step, so it deploys to GitHub Pages
-as-is. Three.js is the only dependency, loaded from a CDN through an import map.
+The page is a plain ES-module app with no build step, so it deploys as-is from a
+private repository through Cloudflare Pages. Three.js is the only dependency,
+loaded from a CDN through an import map.
 
 ```
 index.html
