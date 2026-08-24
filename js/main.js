@@ -16,6 +16,7 @@ import {
 } from './ui/reports.js';
 import { buildModel } from './model/builder.js';
 import { generateScript } from './codegen/openseespy.js';
+import { toNotebook } from './codegen/notebook.js';
 import { getRecord, subscribeGM, exportSeries, scriptFileName } from './model/groundmotion.js';
 import { createViewer } from './viewer/viewer.js';
 import { fmt } from './units.js';
@@ -69,6 +70,7 @@ el('btn-copy').addEventListener('click', copyScript);
 el('btn-download').addEventListener('click', download);
 el('btn-download-2').addEventListener('click', download);
 el('btn-download-gm').addEventListener('click', downloadRecord);
+el('btn-download-nb').addEventListener('click', downloadNotebook);
 
 subscribeGM(() => { markStale(); updateRecordButton(); });
 el('inspector-close').addEventListener('click', () => {
@@ -326,6 +328,14 @@ function download() {
       ? `Put ${scriptFileName(rec)} in the same folder, then run: python <file>.py`
       : 'Run it with: python <file>.py',
     'ok');
+}
+
+/** The same script as a notebook: one code cell per section, headings above. */
+function downloadNotebook() {
+  if (!script) return toast('Nothing to download', 'Compile the model first.', 'warn');
+  downloadText(`${slug(state.projectName)}.ipynb`,
+    toNotebook(script, { title: state.projectName || 'Frame Model' }));
+  toast('Notebook saved', 'Run the cells in order; the last one wipes the model.', 'ok');
 }
 
 /** The cleaned one-column record the generated timeSeries('Path', …) reads. */
