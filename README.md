@@ -171,4 +171,5 @@ Copyright © 2026 Ahmet Şimşek.
 
 Released under [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/):
 you may share and adapt the work for **non-commercial** purposes with credit.
-Commercial use requires prior written permission. See [LICENSE](LICENSE).
+Commercial use requires prior written permission. See [LICENSE](LICENSE)
+and [NOTICE](NOTICE).
