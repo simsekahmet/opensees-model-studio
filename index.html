@@ -90,6 +90,8 @@
   </div>
 
   <input type="file" id="import-file" accept=".json,application/json" class="file-input" />
+  <input type="file" id="results-file" class="file-input" multiple
+         accept=".out,.txt,.json,application/json,text/plain" />
 </header>
 
 <main class="workspace">
@@ -129,6 +131,7 @@
       <button class="tab" role="tab" data-tab="sections">Sections</button>
       <button class="tab" role="tab" data-tab="data">Model Data</button>
       <button class="tab" role="tab" data-tab="code">Python Code</button>
+      <button class="tab" role="tab" data-tab="results">Results</button>
     </nav>
 
     <!-- Scene panel: shared by the 3D / Plan / Elevation tabs -->
@@ -170,6 +173,36 @@
         <div class="toolbar-group" id="frame-picker" hidden>
           <label for="sel-frame">Frame</label>
           <select id="sel-frame" class="mini-select"></select>
+        </div>
+
+        <!-- Result overlays. Hidden until an analysis has been loaded. -->
+        <div class="toolbar-group res-group" id="deform-group" hidden>
+          <label for="sel-deform">Show</label>
+          <select id="sel-deform" class="mini-select">
+            <option value="none">Undeformed</option>
+            <option value="displaced">Deformed shape</option>
+            <option value="mode">Mode shape</option>
+          </select>
+          <select id="sel-mode" class="mini-select" hidden></select>
+          <label for="rng-deform-scale" id="lbl-deform-scale" hidden>Scale</label>
+          <input type="range" id="rng-deform-scale" class="mini-range" hidden
+                 min="0.25" max="8" step="0.25" value="1" />
+          <label class="toolbar-check" id="lbl-animate" hidden>
+            <input type="checkbox" id="tg-animate" /><span>Animate</span>
+          </label>
+        </div>
+
+        <div class="toolbar-group res-group" id="diagram-group" hidden>
+          <label for="sel-diagram">Diagram</label>
+          <select id="sel-diagram" class="mini-select">
+            <option value="">None</option>
+            <option value="N">N — axial</option>
+            <option value="Vy">Vy — shear</option>
+            <option value="Vz">Vz — shear</option>
+            <option value="My">My — moment</option>
+            <option value="Mz">Mz — moment</option>
+            <option value="T">T — torsion</option>
+          </select>
         </div>
 
         <div class="toolbar-spacer"></div>
@@ -224,6 +257,11 @@
         </div>
       </div>
       <pre class="code-block"><code id="code-out">#  The generated OpenSeesPy script will appear here.</code></pre>
+    </div>
+
+    <!-- Analysis results, loaded back from a finished run -->
+    <div class="panel" id="panel-results">
+      <div class="doc-scroll" id="results-root"></div>
     </div>
 
   </section>

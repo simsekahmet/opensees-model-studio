@@ -95,6 +95,7 @@ export function generateScript(s, model, gm = null) {
     '',
     'import math',
     'import os',
+    ...(s.useRecorders ? ['import json'] : []),
     '',
     ...(pySparse ? [
       'import numpy as np',
@@ -568,37 +569,10 @@ export function generateScript(s, model, gm = null) {
     );
   }
 
-  /* ───────────────────────────── recorders ─────────────────────────── */
+  /* ───────────────────────── recorders & manifest ──────────────────── */
   if (s.useRecorders) {
-    rule('Recorders');
-    w(
-      'os.makedirs(OUT_DIR, exist_ok=True)',
-      '',
-      'floor_nodes = [node_tag(level, i, j)',
-      '               for level in range(1, N_Z + 1)',
-      '               for j in range(NY_N) for i in range(NX_N)]',
-      'all_elements = ops.getEleTags()',
-      '',
-      // Reactions have to be read at whichever node actually carries the
-      // restraint. With base isolation the support drops below the bearing, so
-      // recording the superstructure base would sum to zero.
-      ...(isolated ? [
-        '# The restrained node is the foundation node under a bearing, and the',
-        '# column base everywhere else — reading the wrong one sums to zero.',
-        'support_nodes = [foundation_tag(i, j) if HAS_BEARING(i, j) else node_tag(0, i, j)',
-        '                 for j in range(NY_N) for i in range(NX_N)]',
-      ] : [
-        'support_nodes = [node_tag(0, i, j) for j in range(NY_N) for i in range(NX_N)]',
-      ]),
-      '',
-      "ops.recorder('Node', '-file', os.path.join(OUT_DIR, 'node_disp.out'),",
-      "             '-time', '-node', *floor_nodes, '-dof', 1, 2, 3, 'disp')",
-      "ops.recorder('Node', '-file', os.path.join(OUT_DIR, 'reactions.out'),",
-      "             '-time', '-node', *support_nodes, '-dof', 1, 2, 3, 'reaction')",
-      "ops.recorder('Element', '-file', os.path.join(OUT_DIR, 'element_forces.out'),",
-      "             '-time', '-ele', *all_elements, 'globalForce')",
-      ''
-    );
+    rule('Recorders and the result manifest');
+    emitResultManifest(w, s, model, u, isolated);
   }
 
   /* ────────────────────────────── analysis ─────────────────────────── */
@@ -609,6 +583,15 @@ export function generateScript(s, model, gm = null) {
   if (s.runPushover) emitLateral(w, s, model, 'push', false);
   if (s.runCyclic) emitLateral(w, s, model, 'cyc', true);
   if (s.runTimeHistory) emitTimeHistory(w, s, model, gm);
+
+  if (s.useRecorders) {
+    w(
+      '# The recorders are flushed by wipe(); the manifest is written first so',
+      '# the directory is never a set of files nothing can interpret.',
+      'write_manifest()',
+      ''
+    );
+  }
 
   w(
     'ops.wipe()',
@@ -810,6 +793,214 @@ const chunk = (arr, n) => Array.from({ length: Math.ceil(arr.length / n) }, (_, 
 
 /* ═══════════════════════════════ analyses ═══════════════════════════ */
 
+/* ═══════════════════════ recorders and manifest ═════════════════════ */
+
+/**
+ * Recorders write plain columns of numbers with no header, which is fine for
+ * the solver and useless to anyone reading the file afterwards. Alongside them
+ * the script writes `manifest.json`: what every column is, which node or
+ * element it belongs to, where the stories are and which nodes carry the
+ * supports. That file is what turns a directory of numbers back into a model.
+ */
+function emitResultManifest(w, s, model, u, isolated) {
+  w(
+    'os.makedirs(OUT_DIR, exist_ok=True)',
+    '',
+    'all_nodes = ops.getNodeTags()',
+    'all_elements = ops.getEleTags()',
+    '',
+    '# Frame members, in tag order. Devices are kept apart because a bearing',
+    '# does not answer to `localForce` the way a beam-column does.',
+    'frame_elements = [t for t in all_elements if t // 100000 in (1, 2, 3, 6, 7)]',
+    'device_elements = [t for t in all_elements if t // 100000 in (4, 5)]',
+    '',
+    // Reactions have to be read at whichever node actually carries the
+    // restraint. With base isolation the support drops below the bearing, so
+    // recording the superstructure base would sum to zero.
+    ...(isolated ? [
+      '# The restrained node is the foundation node under a bearing, and the',
+      '# column base everywhere else — reading the wrong one sums to zero.',
+      'support_nodes = [foundation_tag(i, j) if HAS_BEARING(i, j) else node_tag(0, i, j)',
+      '                 for j in range(NY_N) for i in range(NX_N)]',
+    ] : [
+      'support_nodes = [node_tag(0, i, j) for j in range(NY_N) for i in range(NX_N)]',
+    ]),
+    '',
+    'floor_nodes = [node_tag(level, i, j)',
+    '               for level in range(1, N_Z + 1)',
+    '               for j in range(NY_N) for i in range(NX_N)]',
+    '',
+    ''
+  );
+
+  /* ── the manifest structure ──────────────────────────────────────── */
+  w(
+    '# Element tags carry their own meaning: the hundred-thousands digit is the',
+    '# family and the thousands digit is the story.',
+    'ELEMENT_KIND = {1: \'column\', 2: \'beamX\', 3: \'beamY\',',
+    '                4: \'isolator\', 5: \'damper\', 6: \'beamX\', 7: \'beamY\'}',
+    '',
+    '',
+    'def element_story(tag):',
+    '    return (tag % 100000) // 1000',
+    '',
+    '',
+    'def response_width(tag, response):',
+    '    """How many numbers an element answers with, asked of the element itself."""',
+    '    try:',
+    '        return len(ops.eleResponse(tag, response))',
+    '    except Exception:',
+    '        return 0',
+    '',
+    '',
+    'LOCAL_FORCE = [\'N_i\', \'Vy_i\', \'Vz_i\', \'T_i\', \'My_i\', \'Mz_i\',',
+    '               \'N_j\', \'Vy_j\', \'Vz_j\', \'T_j\', \'My_j\', \'Mz_j\']',
+    '',
+    'RESULTS = {',
+    `    'app': 'OpenSees Model Studio',`,
+    `    'version': ${py(APP_VERSION)},`,
+    `    'model': ${py(s.projectName || 'Frame Model')},`,
+    `    'unitSystem': ${py(s.unitSystem)},`,
+    `    'units': {'force': ${py(u.force)}, 'length': ${py(u.length)}, 'stress': ${py(u.stress)},`,
+    `              'mass': ${py(u.mass)}, 'accel': ${py(u.accel)}},`,
+    '    \'grid\': {\'stories\': N_Z, \'baysX\': N_X, \'baysY\': N_Y,',
+    '             \'bayX\': list(BAY_X), \'bayY\': list(BAY_Y), \'storyH\': list(STORY_H),',
+    `             'isolated': ${isolated ? 'True' : 'False'}},`,
+    '    \'nodes\': [],',
+    '    \'elements\': [],',
+    '    \'stories\': [],',
+    '    \'supports\': list(support_nodes),',
+    '    \'files\': {},',
+    '    \'cases\': {},',
+    '}',
+    '',
+    'for tag in all_nodes:',
+    '    x, y, z = ops.nodeCoord(tag)',
+    "    RESULTS['nodes'].append({'tag': tag, 'x': x, 'y': y, 'z': z})",
+    '',
+    'for tag in all_elements:',
+    "    RESULTS['elements'].append({",
+    "        'tag': tag,",
+    "        'kind': ELEMENT_KIND.get(tag // 100000, 'other'),",
+    "        'story': element_story(tag),",
+    "        'nodes': list(ops.eleNodes(tag)),",
+    '    })',
+    '',
+    '# Story 0 is the base. `columns` are the members standing *below* that',
+    '# level, which is what a story shear is summed over. Column tags count',
+    '# stories from zero, so the columns under level L carry story index L - 1.',
+    'for level in range(N_Z + 1):',
+    "    RESULTS['stories'].append({",
+    "        'level': level,",
+    "        'z': Z[level],",
+    "        'height': STORY_H[level - 1] if level > 0 else 0.0,",
+    "        'nodes': [node_tag(level, i, j) for j in range(NY_N) for i in range(NX_N)],",
+    "        'columns': [t for t in frame_elements",
+    "                    if ELEMENT_KIND.get(t // 100000) == 'column'",
+    '                    and element_story(t) == level - 1],',
+    '    })',
+    '',
+    ''
+  );
+
+  /* ── recorders, each one registering its own columns ─────────────── */
+  w(
+    'def node_columns(tags, dofs):',
+    '    columns = [{\'name\': \'time\'}]',
+    '    for tag in tags:',
+    '        for dof in dofs:',
+    "            columns.append({'node': tag, 'dof': dof})",
+    '    return columns',
+    '',
+    '',
+    'def element_columns(tags, labels):',
+    '    columns = [{\'name\': \'time\'}]',
+    '    for tag in tags:',
+    '        for label in labels:',
+    "            columns.append({'element': tag, 'component': label})",
+    '    return columns',
+    '',
+    '',
+    'def register(name, response, columns, layout=\'series\'):',
+    "    RESULTS['files'][name] = {'response': response, 'layout': layout, 'columns': columns}",
+    '',
+    '',
+    'def out_path(name):',
+    '    return os.path.join(OUT_DIR, name)',
+    '',
+    '',
+    '# Displacements are recorded at every node, not just the floors, so a',
+    '# deformed shape can be drawn without guessing where the rest of the model went.',
+    "ops.recorder('Node', '-file', out_path('node_disp.out'),",
+    "             '-time', '-node', *all_nodes, '-dof', 1, 2, 3, 'disp')",
+    "register('node_disp.out', 'disp', node_columns(all_nodes, [1, 2, 3]))",
+    '',
+    "ops.recorder('Node', '-file', out_path('reactions.out'),",
+    "             '-time', '-node', *support_nodes, '-dof', 1, 2, 3, 'reaction')",
+    "register('reactions.out', 'reaction', node_columns(support_nodes, [1, 2, 3]))",
+    '',
+    '# Member forces are recorded as envelopes rather than step by step. A full',
+    '# history of twelve components for every member over a cyclic run is tens of',
+    '# megabytes and is almost never read; the minimum, maximum and largest',
+    '# magnitude are what a member is checked against.',
+    'if frame_elements:',
+    "    ops.recorder('EnvelopeElement', '-file', out_path('element_local_envelope.out'),",
+    "                 '-ele', *frame_elements, 'localForce')",
+    "    register('element_local_envelope.out', 'localForce',",
+    '             element_columns(frame_elements, LOCAL_FORCE)[1:], layout=\'envelope\')',
+    '',
+    "    ops.recorder('EnvelopeElement', '-file', out_path('element_envelope.out'),",
+    "                 '-ele', *frame_elements, 'globalForce')",
+    "    register('element_envelope.out', 'globalForce',",
+    "             element_columns(frame_elements, [f'F{n}' for n in range(1, 13)])[1:],",
+    "             layout='envelope')",
+    '',
+    '# Isolators and dampers answer with their own number of components, so the',
+    '# width is asked of the element rather than assumed.',
+    '# Devices keep their full history: an isolator is read as a hysteresis loop,',
+    '# and there are only a handful of them.',
+    'if device_elements:',
+    "    width = response_width(device_elements[0], 'force')",
+    '    if width:',
+    "        ops.recorder('Element', '-file', out_path('device_force.out'),",
+    "                     '-time', '-ele', *device_elements, 'force')",
+    "        register('device_force.out', 'force',",
+    "                 element_columns(device_elements, [f'F{n}' for n in range(1, width + 1)]))",
+    "    width = response_width(device_elements[0], 'deformation')",
+    '    if width:',
+    "        ops.recorder('Element', '-file', out_path('device_deformation.out'),",
+    "                     '-time', '-ele', *device_elements, 'deformation')",
+    "        register('device_deformation.out', 'deformation',",
+    "                 element_columns(device_elements, [f'D{n}' for n in range(1, width + 1)]))",
+    '',
+    ''
+  );
+
+  /* ── helpers the analyses use to write their curves ──────────────── */
+  w(
+    'def write_table(name, rows, labels, response):',
+    '    """Writes a plain numeric table and records what its columns mean."""',
+    "    with open(out_path(name), 'w') as handle:",
+    '        for row in rows:',
+    "            handle.write(' '.join(f'{v:.8e}' for v in row) + '\\n')",
+    "    register(name, response, [{'name': label} for label in labels], layout='table')",
+    '',
+    '',
+    'def base_shear(dof):',
+    '    """Sum of the support reactions along one direction, as a positive force."""',
+    '    ops.reactions()',
+    '    return -sum(ops.nodeReaction(tag, dof) for tag in support_nodes)',
+    '',
+    '',
+    'def write_manifest():',
+    "    with open(out_path('manifest.json'), 'w') as handle:",
+    '        json.dump(RESULTS, handle, indent=1)',
+    "    print(f'Wrote {out_path(\"manifest.json\")}')",
+    '',
+    ''
+  );
+}
+
 /**
  * `system('PythonSparse', …)` hands the linear solve back to Python. It is the
  * one solver that takes an argument: a dictionary naming an object whose
@@ -904,6 +1095,17 @@ function emitGravity(w, s) {
     '',
     "print(f'Gravity complete: {len(ops.getNodeTags())} nodes, {len(ops.getEleTags())} elements.')",
     '',
+    ...(s.useRecorders ? [
+      '# The vertical reaction total is the statics check every result set should',
+      '# be read against: it has to match the applied gravity load.',
+      'ops.reactions()',
+      "RESULTS['cases']['gravity'] = {",
+      "    'baseReaction': [sum(ops.nodeReaction(t, d) for t in support_nodes) for d in (1, 2, 3)],",
+      "    'steps': N_STEPS,",
+      '}',
+      "print(f'Vertical base reaction: {RESULTS[\"cases\"][\"gravity\"][\"baseReaction\"][2]:.6f}')",
+      '',
+    ] : []),
     '# Hold the gravity state and restart the pseudo-time for what follows.',
     "ops.loadConst('-time', 0.0)",
     ''
@@ -923,14 +1125,41 @@ function emitModal(w, s) {
     "    print(f'{n:>4}   {period:>10.4f} s   {freq:>8.4f} Hz')",
     ''
   );
-  if (s.useRecorders) {
-    w(
-      "with open(os.path.join(OUT_DIR, 'periods.out'), 'w') as handle:",
-      '    for n, period in enumerate(periods, start=1):',
-      "        handle.write(f'{n} {period:.6f}\\n')",
-      ''
-    );
-  }
+  if (!s.useRecorders) return;
+
+  w(
+    "write_table('periods.out',",
+    '            [(n, period, 1.0 / period if period > 0.0 else 0.0, lam)',
+    '             for n, (period, lam) in enumerate(zip(periods, eigenvalues), start=1)],',
+    "            ['mode', 'period', 'frequency', 'lambda'], 'modal')",
+    '',
+    '# Mode shapes, one row per node per mode, so the viewer can draw them.',
+    'mode_rows = []',
+    'for n in range(1, N_MODES + 1):',
+    '    for tag in all_nodes:',
+    '        v = ops.nodeEigenvector(tag, n)',
+    '        mode_rows.append((n, tag, v[0], v[1], v[2]))',
+    "write_table('mode_shapes.out', mode_rows,",
+    "            ['mode', 'node', 'ux', 'uy', 'uz'], 'eigenvector')",
+    '',
+    '# Participation factors come from OpenSees itself rather than being',
+    '# re-derived here, so they match what the solver used.',
+    'try:',
+    "    props = ops.modalProperties('-return')",
+    "    RESULTS['cases']['modal'] = {",
+    "        'modes': N_MODES,",
+    "        'periods': list(periods),",
+    "        'totalMass': list(props['totalMass']),",
+    "        'massRatios': {axis: list(props[f'partiMassRatios{axis}'])",
+    "                       for axis in ('MX', 'MY', 'MZ', 'RMX', 'RMY', 'RMZ')},",
+    "        'massRatiosCumulative': {axis: list(props[f'partiMassRatiosCumu{axis}'])",
+    "                                 for axis in ('MX', 'MY', 'MZ', 'RMX', 'RMY', 'RMZ')},",
+    '    }',
+    'except Exception as exc:',
+    "    RESULTS['cases']['modal'] = {'modes': N_MODES, 'periods': list(periods)}",
+    "    print(f'Modal participation unavailable: {exc}')",
+    ''
+  );
 }
 
 /**
@@ -984,10 +1213,30 @@ function emitLateral(w, s, model, p, cyclic) {
   );
 
   if (!cyclic) {
+    // Stepping one increment at a time costs nothing and is the only way to
+    // come out with a capacity curve rather than just a final displacement.
     w(
       `ops.integrator('DisplacementControl', ${P}_NODE, ${P}_DOF, ${P}_TARGET / ${P}_STEPS)`,
-      `if ops.analyze(${P}_STEPS) != 0:`,
-      `    print('Pushover stopped early — the model lost convergence.')`,
+      ...(s.useRecorders ? [
+        `${P}_CURVE = []`,
+        `for step in range(1, ${P}_STEPS + 1):`,
+        '    if ops.analyze(1) != 0:',
+        "        print(f'Pushover stopped early at step {step} — the model lost convergence.')",
+        '        break',
+        `    ${P}_CURVE.append((ops.nodeDisp(${P}_NODE, ${P}_DOF),`,
+        `                     base_shear(${P}_DOF),`,
+        '                     ops.testIter()))',
+        '',
+        `write_table('pushover.out', ${P}_CURVE,`,
+        "            ['roof_disp', 'base_shear', 'iterations'], 'capacity')",
+        `RESULTS['cases']['pushover'] = {`,
+        `    'controlNode': ${P}_NODE, 'dof': ${P}_DOF,`,
+        `    'height': Z[-1], 'targetDrift': ${P}_DRIFT, 'steps': len(${P}_CURVE),`,
+        '}',
+      ] : [
+        `if ops.analyze(${P}_STEPS) != 0:`,
+        "    print('Pushover stopped early — the model lost convergence.')",
+      ]),
       `print(f'Pushover roof displacement: {ops.nodeDisp(${P}_NODE, ${P}_DOF):.4f}')`,
       ''
     );
@@ -999,6 +1248,8 @@ function emitLateral(w, s, model, p, cyclic) {
     `${P}_REPEATS = ${pi(s.cycRepeats)}`,
     '',
     '',
+    ...(s.useRecorders ? [`${P}_CURVE = []`, ''] : []),
+    '',
     'def push_to(node, dof, target, steps):',
     '    """Displacement-controls `node` from where it is to `target`."""',
     '    current = ops.nodeDisp(node, dof)',
@@ -1006,7 +1257,16 @@ function emitLateral(w, s, model, p, cyclic) {
     '    if incr == 0.0:',
     '        return True',
     "    ops.integrator('DisplacementControl', node, dof, incr)",
-    '    return ops.analyze(steps) == 0',
+    ...(s.useRecorders ? [
+      // Recorded step by step: a hysteresis loop is the path, not the endpoints.
+      '    for _ in range(steps):',
+      '        if ops.analyze(1) != 0:',
+      '            return False',
+      `        ${P}_CURVE.append((ops.nodeDisp(node, dof), base_shear(dof), ops.testIter()))`,
+      '    return True',
+    ] : [
+      '    return ops.analyze(steps) == 0',
+    ]),
     '',
     '',
     `for amp in ${P}_AMPS:`,
@@ -1022,7 +1282,16 @@ function emitLateral(w, s, model, p, cyclic) {
     '    else:',
     '        continue',
     '    break',
-    ''
+    '',
+    ...(s.useRecorders ? [
+      `write_table('cyclic.out', ${P}_CURVE,`,
+      "            ['roof_disp', 'base_shear', 'iterations'], 'hysteresis')",
+      `RESULTS['cases']['cyclic'] = {`,
+      `    'controlNode': ${P}_NODE, 'dof': ${P}_DOF, 'height': Z[-1],`,
+      `    'amplitudes': list(${P}_AMPS), 'repeats': ${P}_REPEATS, 'steps': len(${P}_CURVE),`,
+      '}',
+      '',
+    ] : [])
   );
 }
 
@@ -1063,9 +1332,33 @@ function emitTimeHistory(w, s, model, gm) {
     "ops.analysis('Transient')",
     '',
     `n_steps = ${steps}`,
-    'if ops.analyze(n_steps, TH_DT) != 0:',
-    "    print('Time history stopped early — the model lost convergence.')",
-    "print(f'Time history complete: {n_steps} steps of {TH_DT} s.')",
+    ...(s.useRecorders ? [
+      // One step at a time so the iteration count of each one survives; a
+      // convergence history is the first thing to look at when a run misbehaves.
+      'TH_HISTORY = []',
+      'for step in range(1, n_steps + 1):',
+      '    if ops.analyze(1, TH_DT) != 0:',
+      "        print(f'Time history stopped early at step {step}, t = {ops.getTime():.3f} s.')",
+      '        break',
+      '    iterations = ops.testIter()',
+      '    norms = ops.testNorms()',
+      '    norm = norms[iterations - 1] if 0 < iterations <= len(norms) else 0.0',
+      '    TH_HISTORY.append((ops.getTime(), iterations, norm,',
+      '                       base_shear(GM_DOF)))',
+      '',
+      "write_table('convergence.out', TH_HISTORY,",
+      "            ['time', 'iterations', 'norm', 'base_shear'], 'convergence')",
+      "RESULTS['cases']['timeHistory'] = {",
+      "    'dt': TH_DT, 'recordDt': GM_DT, 'scale': GM_SCALE, 'dof': GM_DOF,",
+      "    'record': GM_FILE, 'steps': len(TH_HISTORY), 'requestedSteps': n_steps,",
+      "    'dampingRatio': DAMP_RATIO, 'anchorModes': [MODE_I, MODE_J],",
+      '}',
+      "print(f'Time history complete: {len(TH_HISTORY)} of {n_steps} steps of {TH_DT} s.')",
+    ] : [
+      'if ops.analyze(n_steps, TH_DT) != 0:',
+      "    print('Time history stopped early — the model lost convergence.')",
+      "print(f'Time history complete: {n_steps} steps of {TH_DT} s.')",
+    ]),
     ''
   );
 }

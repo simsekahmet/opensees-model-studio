@@ -4,6 +4,47 @@ All notable changes to OpenSees Model Studio are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [semantic versioning](https://semver.org/).
 
+## [1.1.0] — 2026-08-25
+
+### Added
+
+- **A Results panel.** OpenSees cannot run in a browser, so results come back
+  the way they left: run the generated script, then drop its output folder into
+  the new **Results** tab. It shows the periods with their participating mass
+  ratios, story drift, shear and displacement envelopes, the pushover capacity
+  curve, the hysteresis loop, roof and base-shear traces, the convergence
+  history, and every raw recorder file with its columns finally named. Any of
+  them exports as CSV.
+- **`manifest.json`, written by the generated script.** Recorder files are bare
+  columns of numbers; the manifest says what each column is, which node or
+  element it belongs to, where the stories are and which nodes carry the
+  supports. It is what turns a directory of numbers back into a model — for this
+  app, and for anyone reading the output with their own tools.
+- **Result overlays in the 3D view.** A deformed shape at any scale, animated
+  mode shapes picked by period, and N, V, M, T diagrams drawn along the members.
+  They sit in the existing scene toolbar rather than behind a second navigation
+  layer.
+- **More from every run.** Modal participation factors, mode shapes, a pushover
+  capacity curve, a cyclic hysteresis record, and a convergence history —
+  iterations and test norm at every step — because a run that misbehaves is
+  diagnosed from its convergence, not from its final answer.
+- **A results check in the suite**, run by `npm test` or `python tests/results.py`:
+  it generates a model, runs it against real openseespy, reads the output back
+  through the app's own modules and asserts the numbers — that drift ratios are
+  plausible, that story shear grows towards the base, that mode shapes are not
+  zero vectors, that the hysteresis loop goes both ways.
+
+### Fixed
+
+- **Story shear was attributed to the wrong story.** Column tags count stories
+  from zero, so the columns under level *L* carry story index *L−1*; the
+  manifest had them one level too high, which left the top story empty and
+  shifted every other one down.
+- **Member force output was tens of megabytes.** A cyclic run wrote twelve
+  components for every member at every step — 42 MB for a three-story frame.
+  Members are now recorded as envelopes (minimum, maximum, largest magnitude),
+  which is what a member is checked against, and the same output is 20 kB.
+
 ## [1.0.0] — 2026-08-25
 
 First tagged release. Everything below is relative to the untagged state that

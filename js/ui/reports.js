@@ -284,16 +284,27 @@ export function renderData(root, s, model) {
   }
   root.append(stats);
 
-  /* Warnings */
+  /* Warnings — the build status links straight to this block. */
   if (model.warnings.length) {
-    root.append(heading('Warnings'));
+    const blocking = model.warnings.filter((w) => w.level === 'critical').length;
+    const head = heading(blocking
+      ? `Warnings — ${blocking} of ${model.warnings.length} will stop the analysis`
+      : `Warnings — ${model.warnings.length}`);
+    head.id = 'data-warnings';
+    root.append(head);
+
     const card = document.createElement('div');
     card.className = 'card';
     const ul = document.createElement('ul');
-    for (const wtext of model.warnings) {
+    ul.className = 'warn-list';
+    // Critical first: what stops the analysis outranks what merely colours it.
+    const ordered = [...model.warnings].sort(
+      (a, b) => (a.level === 'critical' ? 0 : 1) - (b.level === 'critical' ? 0 : 1)
+    );
+    for (const w of ordered) {
       const li = document.createElement('li');
-      li.style.cssText = 'margin:4px 0;padding-left:14px;position:relative;color:var(--text-2)';
-      li.textContent = wtext;
+      li.dataset.level = w.level;
+      li.textContent = w.text;
       ul.append(li);
     }
     card.append(ul);
@@ -667,21 +678,21 @@ export function renderNodeSelection(panel, titleEl, bodyEl, nodes, s, { onMove, 
 
 /* ═════════════════════════════════ helpers ══════════════════════════ */
 
-function heading(text) {
+export function heading(text) {
   const h = document.createElement('h3');
   h.className = 'doc-h';
   h.textContent = text;
   return h;
 }
 
-function empty(root, text) {
+export function empty(root, text) {
   const p = document.createElement('p');
   p.className = 'doc-empty';
   p.textContent = text;
   root.append(p);
 }
 
-function table(headers, rows, total) {
+export function table(headers, rows, total) {
   const t = document.createElement('table');
   t.className = 'tbl';
 
@@ -711,7 +722,7 @@ function table(headers, rows, total) {
   return t;
 }
 
-function wrapTable(t) {
+export function wrapTable(t) {
   const wrap = document.createElement('div');
   wrap.className = 'tbl-wrap';
   wrap.append(t);

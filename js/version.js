@@ -7,7 +7,7 @@
  * that older files cannot be read into.
  */
 
-export const APP_VERSION = '1.0.0';
+export const APP_VERSION = '1.1.0';
 export const PROJECT_FORMAT = 1;
 
 /** Python versions the generated scripts are known to run on. */

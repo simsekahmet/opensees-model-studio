@@ -19,6 +19,7 @@ import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer
 
 import { themeColor } from '../ui/shell.js';
 import { fmt } from '../units.js';
+import { memberForces, memberPeak } from '../results/derive.js';
 
 /** Above these counts the labels would be unreadable anyway, so they are cut. */
 const MAX_NODE_LABELS = 400;
@@ -53,6 +54,8 @@ const BASIS = {
   beamY:  [new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 1), new THREE.Vector3(1, 0, 0)],
   isolator: [new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, -1, 0), new THREE.Vector3(1, 0, 0)],
 };
+
+const ZERO = [0, 0, 0];
 
 /** Drawing order; devices come last so they sit on top of the frame. */
 const KINDS = ['column', 'beamX', 'beamY', 'isolator', 'damper'];
@@ -119,8 +122,10 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
   const gLocal = new THREE.Group();
   const gAxes = new THREE.Group();
   const gLabels = new THREE.Group();
+  const gDiagrams = new THREE.Group();
   const gSelection = new THREE.Group();
-  root.add(gElements, gNodes, gSupports, gGrid, gDims, gLocal, gAxes, gLabels, gSelection);
+  root.add(gElements, gNodes, gSupports, gGrid, gDims, gLocal, gAxes,
+           gLabels, gDiagrams, gSelection);
 
   /* ── state ────────────────────────────────────────────────────────── */
   let model = null;
@@ -144,7 +149,23 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
     grid: true,
     supports: true,
     axes: true,
+
+    // Result overlays. `deform` is 'none', 'displaced' or 'mode'; `diagram` is
+    // null or one of the local force components.
+    deform: 'none',
+    deformScale: 1,
+    deformStep: -1,      // -1 is the last recorded step
+    modeNumber: 1,
+    animate: false,
+    diagram: null,       // 'N' | 'Vy' | 'Vz' | 'My' | 'Mz' | 'T'
   };
+
+  /** Loaded analysis results, or null. Set from `setResults`. */
+  let results = null;
+
+  /** Buffers the mode-shape animation rewrites in place, frame by frame. */
+  let animated = null;
+  let phase = 1;
 
   const raycaster = new THREE.Raycaster();
   const pointer = new THREE.Vector2();
@@ -163,6 +184,20 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
     rebuild();
     applyCamera();
     fit();
+  }
+
+  /**
+   * Hands the viewer a loaded analysis. Without one the deformed shape, the
+   * mode shapes and the force diagrams have nothing to draw and stay off.
+   */
+  function setResults(next) {
+    results = next;
+    if (!results) {
+      opts.deform = 'none';
+      opts.diagram = null;
+      opts.animate = false;
+    }
+    if (model) rebuild();
   }
 
   function setOptions(patch) {
@@ -250,16 +285,23 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
   /* ── scene construction ───────────────────────────────────────────── */
 
   function rebuild() {
-    for (const g of [gElements, gNodes, gSupports, gGrid, gDims, gLocal, gAxes, gLabels, gSelection]) clear(g);
+    for (const g of [gElements, gNodes, gSupports, gGrid, gDims, gLocal, gAxes,
+                     gLabels, gDiagrams, gSelection]) clear(g);
     picks = [];
     for (const set of Object.values(labelSets)) set.length = 0;
     declutterKey = '';
     if (!model) return;
 
-    visibleElements = model.elements.filter(elementVisible);
+    // Everything below draws `view`, which is the parametric model until a
+    // result overlay displaces it. Picking, labels and selection then follow
+    // the deformed geometry without knowing that is what they are doing.
+    const view = displacedModel();
+    animated = view.field ? { field: view.field, targets: [] } : null;
+
+    visibleElements = view.elements.filter(elementVisible);
     const nodeTags = new Set();
     for (const e of visibleElements) { nodeTags.add(e.ni); nodeTags.add(e.nj); }
-    const nodes = model.nodes.filter((n) => nodeTags.has(n.tag) || (n.master && opts.view === 'view3d'));
+    const nodes = view.nodes.filter((n) => nodeTags.has(n.tag) || (n.master && opts.view === 'view3d'));
     visibleNodes = nodes;
     nodePick = null;
 
@@ -274,6 +316,7 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
     if (opts.dims) buildDimensions();
     if (opts.localAxes) buildLocalAxes(visibleElements, scale);
     if (opts.axes) buildGlobalAxes(scale);
+    if (opts.diagram) buildDiagrams(visibleElements, scale);
     buildLabels(visibleElements, nodes);
     drawSelection();
   }
@@ -310,6 +353,8 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
       const lines = new THREE.LineSegments(geom, mat);
       gElements.add(lines);
       picks.push({ object: lines, elements: list, mode: 'line' });
+      registerAnimation(geom.getAttribute('position'), positions,
+                        list.flatMap((e) => [e.ni, e.nj]));
     }
   }
 
@@ -412,6 +457,7 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
     mesh.instanceMatrix.needsUpdate = true;
     gNodes.add(mesh);
     nodePick = { object: mesh, nodes };
+    if (animated) animated.nodeMesh = { mesh, nodes, matrix: new THREE.Matrix4() };
   }
 
   function buildSupports(scale) {
@@ -898,6 +944,12 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
 
   function tick() {
     requestAnimationFrame(tick);
+    if (opts.animate && animated) {
+      // A mode shape means nothing without its sign, so the phase sweeps
+      // through -1 … 1 rather than the shape simply being drawn at its peak.
+      phase = Math.sin(performance.now() * 0.0022);
+      applyPhase();
+    }
     controls.update();
     renderer.render(scene, camera);
     labelRenderer.render(scene, camera);
@@ -909,10 +961,192 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
   tick();
 
   return {
-    setModel, setOptions, fit, refreshTheme,
+    setModel, setOptions, setResults, fit, refreshTheme,
     clearSelection, getSelection, setSelection, getNodeSelection, setNodeSelection,
     dispose,
   };
+
+  /* ── result overlays ──────────────────────────────────────────────── */
+
+  /**
+   * Displacement of every node for the active overlay, already scaled so the
+   * largest one is a readable fraction of the model. Returns null when there is
+   * nothing to draw.
+   */
+  function deformationField() {
+    if (!results || opts.deform === 'none') return null;
+
+    const raw = opts.deform === 'mode' ? modeField() : displacementField();
+    if (!raw || !raw.size) return null;
+
+    let peak = 0;
+    for (const v of raw.values()) {
+      const m = Math.hypot(v[0], v[1], v[2]);
+      if (m > peak) peak = m;
+    }
+    if (!(peak > 0)) return null;
+
+    // A deformed shape is read for its shape, not its magnitude: the largest
+    // displacement is drawn at a fixed fraction of the model so the picture
+    // stays legible whether the answer is millimetres or metres.
+    const span = Math.max(Math.hypot(...model.bounds.max), 1e-6);
+    const factor = (span * 0.06 / peak) * (Number(opts.deformScale) || 1);
+
+    const scaled = new Map();
+    for (const [tag, v] of raw) scaled.set(tag, [v[0] * factor, v[1] * factor, v[2] * factor]);
+    return scaled;
+  }
+
+  function displacementField() {
+    const file = 'node_disp.out';
+    if (!results.has(file)) return null;
+    const rows = results.series[file].rows;
+    if (!rows.length) return null;
+
+    const step = opts.deformStep < 0 ? rows.length - 1 : Math.min(opts.deformStep, rows.length - 1);
+    const row = rows[step];
+
+    const field = new Map();
+    for (const node of model.nodes) {
+      const cx = results.nodeColumn(file, node.tag, 1);
+      const cy = results.nodeColumn(file, node.tag, 2);
+      const cz = results.nodeColumn(file, node.tag, 3);
+      if (cx < 0) continue;
+      field.set(node.tag, [row[cx], cy < 0 ? 0 : row[cy], cz < 0 ? 0 : row[cz]]);
+    }
+    return field;
+  }
+
+  function modeField() {
+    if (!results.modeShapes) return null;
+    const shape = results.modeShapes.get(Number(opts.modeNumber));
+    if (!shape) return null;
+
+    const field = new Map();
+    for (const node of model.nodes) {
+      const v = shape.get(node.tag);
+      if (v) field.set(node.tag, v);
+    }
+    return field;
+  }
+
+  /**
+   * The model as it is drawn: the parametric one when no overlay is active, and
+   * a displaced copy of it otherwise. Every builder downstream works on this,
+   * so nothing else has to know an overlay exists.
+   */
+  function displacedModel() {
+    const field = deformationField();
+    if (!field) return model;
+
+    const nodes = model.nodes.map((n) => {
+      const d = field.get(n.tag);
+      return d ? { ...n, x: n.x + d[0], y: n.y + d[1], z: n.z + d[2] } : n;
+    });
+    const byTag = new Map(nodes.map((n) => [n.tag, n]));
+    const elements = model.elements.map((e) => {
+      const a = byTag.get(e.ni);
+      const b = byTag.get(e.nj);
+      return a && b ? { ...e, p1: [a.x, a.y, a.z], p2: [b.x, b.y, b.z] } : e;
+    });
+    return { ...model, nodes, elements, field };
+  }
+
+  /**
+   * Remembers a position buffer so the mode-shape animation can rewrite it in
+   * place. The undeformed coordinates are recovered by subtracting the field
+   * that was already added, which is cheaper and less error-prone than building
+   * the geometry twice.
+   */
+  function registerAnimation(attribute, positions, tags) {
+    if (!animated) return;
+    const base = Float32Array.from(positions);
+    tags.forEach((tag, v) => {
+      const d = animated.field.get(tag);
+      if (!d) return;
+      base[v * 3] -= d[0];
+      base[v * 3 + 1] -= d[1];
+      base[v * 3 + 2] -= d[2];
+    });
+    animated.targets.push({ attribute, base, tags });
+  }
+
+  /** Redraws the registered geometry at the current animation phase. */
+  function applyPhase() {
+    if (!animated) return;
+
+    for (const target of animated.targets) {
+      const array = target.attribute.array;
+      target.tags.forEach((tag, v) => {
+        const d = animated.field.get(tag);
+        if (!d) return;
+        array[v * 3] = target.base[v * 3] + phase * d[0];
+        array[v * 3 + 1] = target.base[v * 3 + 1] + phase * d[1];
+        array[v * 3 + 2] = target.base[v * 3 + 2] + phase * d[2];
+      });
+      target.attribute.needsUpdate = true;
+    }
+
+    const nodeTarget = animated.nodeMesh;
+    if (nodeTarget) {
+      nodeTarget.nodes.forEach((n, i) => {
+        const d = animated.field.get(n.tag) || ZERO;
+        nodeTarget.matrix.makeTranslation(
+          n.x - d[0] + phase * d[0],
+          n.y - d[1] + phase * d[1],
+          n.z - d[2] + phase * d[2]
+        );
+        nodeTarget.mesh.setMatrixAt(i, nodeTarget.matrix);
+      });
+      nodeTarget.mesh.instanceMatrix.needsUpdate = true;
+    }
+  }
+
+  /**
+   * Local force diagrams, drawn as a ribbon standing off each member.
+   *
+   * Only the end values are recorded, so the diagram between them is linear —
+   * which is exact for axial force and shear, and for moment on a member
+   * carrying no span load. Members that do carry one are marked in the panel
+   * rather than being drawn as if the straight line were the whole story.
+   */
+  function buildDiagrams(elements, scale) {
+    const component = opts.diagram;
+    if (!results || !component || !results.has('element_local_envelope.out')) return;
+
+    const peak = memberPeak(results, component);
+    if (!(peak > 0)) return;
+
+    const size = scale * 0.08 / peak;
+    const colour = new THREE.Color(themeColor(component === 'N' ? '--el-column' : '--el-beam'));
+    const material = new THREE.LineBasicMaterial({ color: colour });
+    const points = [];
+
+    for (const e of elements) {
+      if (!['column', 'beamX', 'beamY'].includes(e.kind)) continue;
+      const forces = memberForces(results, e.tag);
+      if (!forces) continue;
+
+      // Sign convention: the value at end j is the one the member carries out
+      // of that end, so it is negated to draw a continuous diagram.
+      const vi = forces.i[component];
+      const vj = -forces.j[component];
+      const [, localY, localZ] = basisOf(e);
+      // Bending about local z is drawn in the local y plane, and vice versa.
+      const offset = component === 'Mz' || component === 'Vy' ? localY : localZ;
+
+      const a = new THREE.Vector3(...e.p1);
+      const b = new THREE.Vector3(...e.p2);
+      const ai = a.clone().addScaledVector(offset, vi * size);
+      const bj = b.clone().addScaledVector(offset, vj * size);
+
+      points.push(a, ai, ai, bj, bj, b, a, b);
+    }
+
+    if (!points.length) return;
+    const geom = new THREE.BufferGeometry().setFromPoints(points);
+    gDiagrams.add(new THREE.LineSegments(geom, material));
+  }
 
   /* ── small helpers ────────────────────────────────────────────────── */
 

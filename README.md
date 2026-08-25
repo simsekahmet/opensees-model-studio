@@ -7,7 +7,7 @@ tables, and a runnable `.py` script — all from a static page.
 
 **Live app:** https://simsekahmet.github.io/opensees-model-studio/
 
-**Version 1.0.0** — see [CHANGELOG.md](CHANGELOG.md).
+**Version 1.1.0** — see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -21,6 +21,7 @@ tables, and a runnable `.py` script — all from a static page.
 | **Sections** | Scaled cross-section drawings with rebar layout, dimensions and section properties — including any section created by editing members, drawn the same way and listing the members that carry it. |
 | **Model Data** | Story, element and node tables — tags, coordinates, restraints, lengths, section sizes, line loads and masses. |
 | **Python Code** | The generated OpenSeesPy script, syntax highlighted, ready to copy or download as `.py` or as a `.ipynb` notebook with one code cell per section. |
+| **Results** | A finished analysis, read back from its output folder: periods and participating mass, story drift, shear and displacement envelopes, the pushover capacity curve, the hysteresis loop, traces, the convergence history, and every recorder file with its columns named. |
 
 ## Editing in the view
 
@@ -57,6 +58,38 @@ member edits and Reset, which asks for confirmation first.
 file; `Import project…` reads it back, filling in anything a newer release added.
 The app also keeps its state in the browser's local storage — and tells you when
 it cannot, rather than losing the model when the tab closes.
+
+## Reading the results back
+
+The page builds models and writes scripts; it does not solve them. What it can
+do is read the answer back. Run the generated script, then drop its output
+folder onto the **Results** tab.
+
+That works because the script writes `manifest.json` next to the recorder files.
+Recorder output is bare columns of numbers with no header; the manifest names
+every column — which node, which degree of freedom, which element, which
+component — and carries the node coordinates, the element table, the story
+levels and the support nodes with it. So a result set is self-describing, both
+here and in whatever tools you read it with.
+
+| From | You get |
+|---|---|
+| `manifest.json` | column names, model geometry, story levels, supports, case metadata |
+| `node_disp.out` | displacement of every node, every step |
+| `reactions.out` | reactions at the nodes that carry the supports |
+| `element_local_envelope.out` | N, Vy, Vz, T, My, Mz envelopes at both ends of every member |
+| `element_envelope.out` | the same in global directions, which story shear is summed from |
+| `mode_shapes.out`, `periods.out` | mode shapes, periods and participating mass |
+| `pushover.out`, `cyclic.out` | roof displacement, base shear and iterations per step |
+| `convergence.out` | time, iterations and test norm per step of a time history |
+
+Member forces are envelopes rather than a full history on purpose: twelve
+components for every member at every step of a cyclic run is tens of megabytes
+and is almost never read, while the minimum, the maximum and the largest
+magnitude are what a member is checked against.
+
+In the 3D view the same results drive a deformed shape at any scale, animated
+mode shapes, and N–V–M diagrams along the members.
 
 Everything you set in the sidebar maps onto a real OpenSeesPy command:
 
@@ -104,16 +137,23 @@ js/
     builder.js       grid → nodes, elements, loads, masses, diaphragms
   codegen/
     openseespy.js    emits the parametric OpenSeesPy script
+    notebook.js      the same script as a .ipynb
+  results/
+    load.js          reads an output folder back through manifest.json
+    derive.js        story drift, story shear, base shear, member envelopes
   viewer/
     viewer.js        WebGL scene, 3D/plan/elevation cameras, picking
   ui/
     shell.js         theme, tabs, toasts, confirmations, downloads
     form.js          renders the sidebar from schema.js
     reports.js       Sections, Model Data and inspector panels
+    results.js       the Results panel
+    charts.js        the SVG plotting the results are drawn with
 tests/
   generate.mjs       writes one script per variant, headlessly
   run_variants.py    runs them against real openseespy
   equilibrium.py     statics check on fixed and isolated bases
+  results.py         end-to-end check of the result pipeline
 ```
 
 Adding a new OpenSeesPy option means adding one entry to `js/schema.js` and one

@@ -1,4 +1,4 @@
-"""tests/run_variants.py — runs every generated script against real openseespy.
+"""tests/run_variants.py - runs every generated script against real openseespy.
 
 Each script is executed in its own interpreter, so a solver that aborts the
 process cannot take the rest of the run with it. A script that raises is a
@@ -125,8 +125,8 @@ def main() -> int:
         {"python": sys.version.split()[0], "counts": counts, "results": results},
         indent=2) + "\n", encoding="utf8")
 
-    print(f"\n{counts['ok']} completed · {counts['no-convergence']} did not converge · "
-          f"{counts['error']} script errors · {counts['timeout']} timed out")
+    print(f"\n{counts['ok']} completed | {counts['no-convergence']} did not converge | "
+          f"{counts['error']} script errors | {counts['timeout']} timed out")
     print(f"Report: {report}")
 
     # Only a script error or a timeout is a failure of the generator.

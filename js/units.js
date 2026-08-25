@@ -54,14 +54,34 @@ export function unitLabel(systemId, key) {
   return u[key] || key;
 }
 
+/** Relative error at which fixed notation stops being an honest rendering. */
+const FIXED_TOLERANCE = 0.01;
+
 /**
  * Formats a number for display: fixed notation for human-scale values,
- * exponential for the very large / very small (moments of inertia in mm⁴,
- * strains, and so on).
+ * exponential for the very large and for anything fixed notation would round
+ * away.
+ *
+ * The cutoff is measured, not assumed. A beam's effective Iy of 0.000433 m⁴
+ * rounds to `0.000` at three decimals — a report that says a section has zero
+ * inertia is worse than one that says `4.33e-4`, so whenever the fixed form
+ * misrepresents the value by more than a per cent, the exponential form is used
+ * instead.
  */
 export function fmt(value, digits = 3) {
   if (value === null || value === undefined || Number.isNaN(value)) return '—';
+  if (!Number.isFinite(value)) return String(value);
+
   const a = Math.abs(value);
-  if (a !== 0 && (a >= 1e6 || a < 1e-4)) return value.toExponential(digits);
-  return Number(value.toFixed(digits)).toString();
+  if (a === 0) return '0';
+  if (a >= 1e6) return trimExponent(value, digits);
+
+  const fixed = Number(value.toFixed(digits));
+  if (fixed !== 0 && Math.abs((fixed - value) / value) <= FIXED_TOLERANCE) return String(fixed);
+  return trimExponent(value, digits);
+}
+
+/** `4.330e-4` → `4.33e-4`: the trailing zeros claim precision that is not there. */
+function trimExponent(value, digits) {
+  return Number(value.toExponential(digits)).toExponential();
 }

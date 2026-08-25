@@ -19,6 +19,7 @@
 import { expandList, validateState, firstIssue } from '../state.js';
 import { allSections, sectionWithDims, EDITABLE_DIMS, usesFibers } from './sections.js';
 import { ISOLATOR_TYPES } from './devices.js';
+import { getRecord } from './groundmotion.js';
 
 const NODE_BASE = 10000;
 const MASTER_OFFSET = 9999;
@@ -378,42 +379,53 @@ export function buildModel(s) {
   }
 
   /* ── sanity checks ──────────────────────────────────────────────────── */
+
+  // `critical` is reserved for the cases where the analysis is known in advance
+  // not to run: a mechanism, or an eigen problem with nothing to solve. The
+  // rest are things worth reading before trusting the results.
+  const warn = (text) => warnings.push({ level: 'warn', text });
+  const critical = (text) => warnings.push({ level: 'critical', text });
+
   if (s.baseFixity === 'Free') {
-    warnings.push('The base is unrestrained — the model has rigid body modes and the analysis will not converge.');
+    critical('The base is unrestrained — the model has rigid body modes and the analysis will not converge.');
   }
   if (movedTags.length) {
-    warnings.push(`${movedTags.length} joint${movedTags.length > 1 ? 's have' : ' has'} been moved off the grid. `
+    warn(`${movedTags.length} joint${movedTags.length > 1 ? 's have' : ' has'} been moved off the grid. `
       + 'Member lengths follow the moved joints, but slab loads and tributary masses are still '
       + 'computed from the nominal bay spacing.');
   }
   if (isolated && ISOLATOR_TYPES[s.isolatorType]?.partialDOF) {
-    warnings.push(`${s.isolatorType} carries shear only — it supplies no vertical or torsional `
+    critical(`${s.isolatorType} carries shear only — it supplies no vertical or torsional `
       + 'stiffness, so the isolation level has a zero-energy mode and the analysis will not '
       + 'converge on its own. Use a bearing that takes -P, -T, -My and -Mz, or add a companion element.');
   }
   if (isolated && s.rigidDiaphragm) {
-    warnings.push('Rigid diaphragms and base isolation are both on; the isolation level itself has no diaphragm.');
+    warn('Rigid diaphragms and base isolation are both on; the isolation level itself has no diaphragm.');
   }
   if (s.useDampers && !dampers.length) {
-    warnings.push('No dampers were placed — check the frame line, bay and story selectors.');
+    warn('No dampers were placed — check the frame line, bay and story selectors.');
   }
   if (s.useDampers && s.damperConfig === 'chevron') {
-    warnings.push(`Chevron dampers split ${elements.filter((e) => e.splitSibling).length} beams at midspan, so those beams are two elements each.`);
+    warn(`Chevron dampers split ${elements.filter((e) => e.splitSibling).length} beams at midspan, so those beams are two elements each.`);
   }
-  if (s.massSource === 'none' && !s.elementMass && s.runModal) {
-    warnings.push('No mass is defined anywhere, so the eigenvalue analysis cannot run. Enable nodal mass or element mass.');
+  if (s.massSource === 'none' && !s.elementMass && (s.runModal || s.runTimeHistory)) {
+    critical('No mass is defined anywhere, so the eigenvalue analysis cannot run. Enable nodal mass or element mass.');
   }
   if (usesFibers(s) && ['elasticBeamColumn', 'elasticTimoshenkoBeam'].includes(s.colElement)) {
-    warnings.push('Columns use an elastic element, so the fiber section is ignored for them.');
+    warn('Columns use an elastic element, so the fiber section is ignored for them.');
   }
   if (usesFibers(s) && ['elasticBeamColumn', 'elasticTimoshenkoBeam'].includes(s.beamElement)) {
-    warnings.push('Beams use an elastic element, so the fiber section is ignored for them.');
+    warn('Beams use an elastic element, so the fiber section is ignored for them.');
   }
   if (usesFibers(s) && s.colShape === 'ISection') {
-    warnings.push('The I-section fiber mesh is generated as three rectangular patches without reinforcement layers.');
+    warn('The I-section fiber mesh is generated as three rectangular patches without reinforcement layers.');
   }
   if (s.matSystem === 'steel' && usesFibers(s)) {
-    warnings.push('Steel fiber sections use the steel material for the whole cross-section; concrete parameters are ignored.');
+    warn('Steel fiber sections use the steel material for the whole cross-section; concrete parameters are ignored.');
+  }
+  if (s.runTimeHistory && !getRecord()) {
+    warn('Time history is on but no acceleration record is loaded. The script still expects the '
+      + 'file beside it at run time and stops if it is missing.');
   }
   for (const [name, v] of Object.entries({ 'Bay width X': spansX, 'Bay width Y': spansY, 'Story height': heights })) {
     if (v.some((x) => !(x > 0))) errors.push(`${name} must be greater than zero.`);

@@ -44,6 +44,7 @@ const PANEL_OF = {
   sections: 'panel-sections',
   data: 'panel-data',
   code: 'panel-code',
+  results: 'panel-results',
 };
 
 export function initTabs(onChange) {
@@ -146,10 +147,29 @@ export function confirmDialog({ title, message, confirmLabel = 'Continue', tone 
 
 /* ─────────────────────────── status indicator ───────────────────────── */
 
-export function setStatus(text, tone = 'idle') {
+/**
+ * Sets the build status. Passing `onClick` turns the pill into a button — used
+ * when the status stands for something the user should be able to open, such as
+ * the list of warnings behind a "built with 2 warnings".
+ */
+export function setStatus(text, tone = 'idle', onClick = null) {
   const host = document.getElementById('build-status');
   host.dataset.tone = tone;
   document.getElementById('build-status-text').textContent = text;
+
+  host.onclick = onClick;
+  host.classList.toggle('is-clickable', !!onClick);
+  if (onClick) {
+    host.setAttribute('role', 'button');
+    host.setAttribute('tabindex', '0');
+    host.onkeydown = (ev) => {
+      if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); onClick(); }
+    };
+  } else {
+    host.removeAttribute('role');
+    host.removeAttribute('tabindex');
+    host.onkeydown = null;
+  }
 }
 
 /* ──────────────────────────── file download ─────────────────────────── */

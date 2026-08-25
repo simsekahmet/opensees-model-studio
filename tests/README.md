@@ -22,6 +22,7 @@ error, so the suite cannot run there.
 node tests/generate.mjs
 python tests/run_variants.py
 python tests/equilibrium.py
+python tests/results.py
 ```
 
 Or in one step, if you have npm available:
@@ -63,6 +64,25 @@ The isolated cases are the point of the check. With base isolation the restraint
 moves down to the foundation node under each bearing, so a reaction recorder
 left pointing at the superstructure base sums to zero — a wrong answer that
 looks like a working model. That regression is exactly what this catches.
+
+**`results.py`** closes the loop. It generates one model with every kind of
+output turned on, runs it, and then reads the output directory back through the
+app's own `results/load.js` and `results/derive.js` — the same code the browser
+uses — asserting that the numbers mean what the panel says they mean:
+
+- every file the manifest lists was found, and every displacement column carries
+  its node tag
+- drift ratios are in a plausible range
+- story shear grows towards the base, which is the one thing a lateral analysis
+  must do
+- member end forces come back as a complete local set, with a non-zero peak to
+  scale diagrams against
+- mode shapes are not zero vectors and periods descend
+- the pushover curve advances under positive base shear, and the hysteresis loop
+  goes both ways
+
+A result reader that is never run against a real analysis is not a reader, it is
+a hope.
 
 ## Coverage
 

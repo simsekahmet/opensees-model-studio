@@ -1,4 +1,4 @@
-"""tests/equilibrium.py — checks statics end to end on a generated model.
+"""tests/equilibrium.py - checks statics end to end on a generated model.
 
 Runs a script that has recorders enabled, sums the vertical base reactions the
 solver reports and compares them against the applied gravity load. Anything
@@ -40,7 +40,7 @@ def sum_vertical_reactions(reaction_file: Path) -> float:
     """Adds up the Z column of the last line of a reaction recorder file."""
     lines = [line for line in reaction_file.read_text().splitlines() if line.strip()]
     if not lines:
-        raise SystemExit(f"{reaction_file} is empty — no reactions were recorded.")
+        raise SystemExit(f"{reaction_file} is empty - no reactions were recorded.")
     values = [float(v) for v in lines[-1].split()]
     # '-time' puts the pseudo-time first, then three DOF per node.
     per_node = values[1:]
@@ -92,7 +92,7 @@ def run_case(stem: str, label: str) -> bool:
 
 
 def main() -> int:
-    print("Statics check — sum of vertical base reactions vs applied gravity\n")
+    print("Statics check - sum of vertical base reactions vs applied gravity\n")
     passed = all([run_case(stem, label) for stem, label in CASES])
     print("\nAll cases balance." if passed else "\nAt least one case does not balance.")
     return 0 if passed else 1

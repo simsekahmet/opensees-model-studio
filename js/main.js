@@ -19,6 +19,8 @@ import { APP_VERSION } from './version.js';
 import {
   renderSections, renderData, renderInspector, renderSelectionSummary, renderNodeSelection,
 } from './ui/reports.js';
+import { renderResults, toCsv } from './ui/results.js';
+import { loadResults, ResultError } from './results/load.js';
 import { buildModel } from './model/builder.js';
 import { generateScript } from './codegen/openseespy.js';
 import { toNotebook } from './codegen/notebook.js';
@@ -48,6 +50,7 @@ const dom = {
   codeMeta: el('code-meta'),
   sectionsRoot: el('sections-root'),
   dataRoot: el('data-root'),
+  resultsRoot: el('results-root'),
 };
 
 let model = null;
@@ -61,7 +64,7 @@ initTheme(el('btn-theme'), () => {
   if (model) refreshPanels();
 });
 
-initTabs(onTabChange);
+const tabs = initTabs(onTabChange);
 
 const viewer = createViewer(dom.sceneCanvas, dom.sceneLabels, {
   band: dom.band,
@@ -144,6 +147,118 @@ importInput.addEventListener('change', async () => {
 
 el('mi-download').addEventListener('click', () => { closeMenus(); download(); });
 el('mi-notebook').addEventListener('click', () => { closeMenus(); downloadNotebook(); });
+
+/* ─────────────────────────── analysis results ───────────────────────── */
+
+let results = null;
+const resultsInput = el('results-file');
+
+resultsInput.addEventListener('change', () => {
+  const files = [...resultsInput.files];
+  resultsInput.value = '';
+  if (files.length) ingestResults(files);
+});
+
+async function ingestResults(files) {
+  try {
+    results = await loadResults(files);
+  } catch (err) {
+    if (!(err instanceof ResultError)) console.error(err);
+    toast('Could not read the results', err.message, 'error', 9000);
+    return;
+  }
+  viewer.setResults(results);
+  paintResults();
+  paintOverlayControls();
+  const n = Object.keys(results.series).length;
+  toast('Results loaded', `${n} file${n > 1 ? 's' : ''} — the deformed shape and mode shapes `
+    + 'are now available in the 3D view.', 'ok', 6000);
+}
+
+function paintResults() {
+  renderResults(dom.resultsRoot, results, {
+    onPick: () => resultsInput.click(),
+    onFiles: ingestResults,
+    onClear: () => {
+      results = null;
+      viewer.setResults(null);
+      paintResults();
+      paintOverlayControls();
+      toast('Results cleared', 'The model itself is untouched.', 'info', 2500);
+    },
+    onExport: (name) => {
+      downloadText(`${slug(state.projectName)}-${name.replace(/\.out$/, '')}.csv`,
+        toCsv(results, name));
+      toast('CSV saved', `${name} with its columns named from the manifest.`, 'ok');
+    },
+  });
+}
+
+paintResults();
+
+/* ── result overlays in the 3D scene ─────────────────────────────────── */
+
+const deformSelect = el('sel-deform');
+const modeSelect = el('sel-mode');
+const scaleRange = el('rng-deform-scale');
+const animateToggle = el('tg-animate');
+const diagramSelect = el('sel-diagram');
+
+// `paintOverlayControls` pushes the mode through to the viewer, so the handler
+// only has to decide which controls belong on screen.
+deformSelect.addEventListener('change', paintOverlayControls);
+modeSelect.addEventListener('change', () => viewer.setOptions({ modeNumber: Number(modeSelect.value) }));
+scaleRange.addEventListener('input', () => viewer.setOptions({ deformScale: Number(scaleRange.value) }));
+animateToggle.addEventListener('change', () => viewer.setOptions({ animate: animateToggle.checked }));
+diagramSelect.addEventListener('change', () => viewer.setOptions({ diagram: diagramSelect.value || null }));
+
+/**
+ * The overlay controls exist only when there is something behind them: no
+ * results means no deformed shape, and no recorded modes means no mode picker.
+ */
+function paintOverlayControls() {
+  const hasResults = !!results;
+  const modes = results && results.modeShapes ? [...results.modeShapes.keys()].sort((a, b) => a - b) : [];
+  const hasForces = !!(results && results.has('element_local_envelope.out'));
+
+  el('deform-group').hidden = !hasResults;
+  el('diagram-group').hidden = !hasForces;
+
+  if (!hasResults) {
+    deformSelect.value = 'none';
+    diagramSelect.value = '';
+    animateToggle.checked = false;
+    return;
+  }
+
+  // A mode shape option that would draw nothing is worse than no option.
+  const modeOption = [...deformSelect.options].find((o) => o.value === 'mode');
+  modeOption.disabled = !modes.length;
+  if (!modes.length && deformSelect.value === 'mode') deformSelect.value = 'displaced';
+
+  if (modeSelect.options.length !== modes.length) {
+    modeSelect.textContent = '';
+    const periods = (results.cases.modal && results.cases.modal.periods) || [];
+    for (const n of modes) {
+      const o = document.createElement('option');
+      o.value = String(n);
+      const period = periods[n - 1];
+      o.textContent = period ? `Mode ${n} — ${fmt(period, 4)} s` : `Mode ${n}`;
+      modeSelect.append(o);
+    }
+  }
+
+  const isMode = deformSelect.value === 'mode';
+  const isDeformed = deformSelect.value !== 'none';
+  modeSelect.hidden = !isMode;
+  el('lbl-animate').hidden = !isMode;
+  scaleRange.hidden = !isDeformed;
+  el('lbl-deform-scale').hidden = !isDeformed;
+
+  viewer.setOptions({ deform: deformSelect.value });
+}
+
+paintOverlayControls();
 
 /* ─────────────────────── local storage health ───────────────────────── */
 
@@ -320,14 +435,43 @@ function compile() {
   const s = model.stats;
   el('legend-iso').hidden = !s.isolators;
   el('legend-damp').hidden = !s.dampers;
-  setStatus(`Model built · ${s.nodes} nodes · ${s.elements} elements`, 'ok');
   dom.formSummary.textContent =
     `${model.grid.nz} stories · ${model.grid.nx}×${model.grid.ny} bays · ${s.dof} DOF`;
 
-  if (model.warnings.length) {
-    toast(`${model.warnings.length} warning${model.warnings.length > 1 ? 's' : ''}`,
-      model.warnings[0], 'warn', 6500);
+  reportBuild(model.warnings);
+}
+
+/**
+ * The build status carries the warnings rather than hiding them in a toast that
+ * has already faded by the time the model is being read. Green means nothing
+ * was flagged; amber means something is worth reading; red means the analysis
+ * is known in advance not to run. Either of the last two opens the list.
+ */
+function reportBuild(warnings) {
+  const s = model.stats;
+  const blocking = warnings.filter((w) => w.level === 'critical');
+  const plural = (n, word) => `${n} ${word}${n > 1 ? 's' : ''}`;
+
+  if (!warnings.length) {
+    setStatus(`Model built · ${s.nodes} nodes · ${s.elements} elements`, 'ok');
+    return;
   }
+
+  if (blocking.length) {
+    setStatus(`Model built · ${plural(blocking.length, 'blocking issue')}`, 'error', showWarnings);
+    toast(plural(blocking.length, 'blocking issue'), blocking[0].text, 'error', 9000);
+    return;
+  }
+
+  setStatus(`Model built with ${plural(warnings.length, 'warning')}`, 'warn', showWarnings);
+  toast(plural(warnings.length, 'warning'), warnings[0].text, 'warn', 6500);
+}
+
+/** Opens Model Data at the warnings block. */
+function showWarnings() {
+  tabs.select('data');
+  const target = document.getElementById('data-warnings');
+  if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 /** Regenerates every panel that depends on the current model or theme. */

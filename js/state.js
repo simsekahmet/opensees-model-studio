@@ -16,6 +16,7 @@
 import { allFields } from './schema.js';
 import { DEFAULT_SYSTEM } from './units.js';
 import { APP_VERSION, PROJECT_FORMAT } from './version.js';
+import { structuralIssues } from './model/checks.js';
 
 const STORAGE_KEY = 'osms.state.v1';
 
@@ -437,7 +438,14 @@ export function validateState(s = state) {
       continue;
     }
     const n = Number(raw);
-    if (f.min !== undefined && n < f.min) errors[f.id] = `Must be ${trim(f.min)} or more.`;
+    // `gt` and `lt` are the open bounds — a bay of exactly 0 or a damping ratio
+    // of exactly 1 is as unusable as one outside the range.
+    if (f.gt !== undefined && !(n > f.gt)) {
+      errors[f.id] = f.gt === 0
+        ? 'Must be greater than zero.'
+        : `Must be greater than ${trim(f.gt)}.`;
+    } else if (f.lt !== undefined && !(n < f.lt)) errors[f.id] = `Must be less than ${trim(f.lt)}.`;
+    else if (f.min !== undefined && n < f.min) errors[f.id] = `Must be ${trim(f.min)} or more.`;
     else if (f.max !== undefined && n > f.max) errors[f.id] = `Must be ${trim(f.max)} or less.`;
     else if (f.step === 1 && !Number.isInteger(n)) errors[f.id] = 'Must be a whole number.';
   }
@@ -450,6 +458,17 @@ export function validateState(s = state) {
     const result = parseList(s[id], Math.round(count));
     if (result.errors.length) errors[id] = result.errors[0];
     else if (result.notice) notices[id] = result.notice;
+  }
+
+  // Checks that need more than one field: section proportions, cover and
+  // reinforcement against the section they produce, and record timing.
+  // A field that is already wrong on its own keeps its simpler message.
+  const cross = structuralIssues(s);
+  for (const [id, message] of Object.entries(cross.errors)) {
+    if (!errors[id]) errors[id] = message;
+  }
+  for (const [id, message] of Object.entries(cross.notices)) {
+    if (!errors[id] && !notices[id]) notices[id] = message;
   }
 
   return { ok: Object.keys(errors).length === 0, errors, notices };
