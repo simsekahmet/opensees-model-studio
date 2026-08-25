@@ -6,7 +6,7 @@
  */
 
 import { SCHEMA } from '../schema.js';
-import { state, setValue, subscribe } from '../state.js';
+import { state, setValue, subscribe, validateState } from '../state.js';
 import { unitLabel } from '../units.js';
 import { loadRecordFile, subscribeGM, getRecord } from '../model/groundmotion.js';
 
@@ -59,8 +59,10 @@ export function renderForm(root, onDirty) {
   refresh();
   subscribe(refresh);
 
-  /** Re-applies conditional visibility, unit labels and values. */
+  /** Re-applies conditional visibility, unit labels, values and messages. */
   function refresh() {
+    const { errors, notices } = validateState(state);
+
     for (const r of registry) {
       const visible = !r.field.showIf || r.field.showIf(state);
       r.wrapper.hidden = !visible;
@@ -74,6 +76,18 @@ export function renderForm(root, onDirty) {
         const next = value === undefined || value === null ? '' : String(value);
         if (r.input.value !== next) r.input.value = next;
       }
+
+      // A bad value is reported where it was typed and is never replaced; a
+      // list that had to be repeated or truncated says so in the same place.
+      if (!r.msgEl) continue;
+      const error = visible ? errors[r.field.id] : undefined;
+      const notice = visible ? notices[r.field.id] : undefined;
+      const text = error || notice || '';
+      r.msgEl.textContent = text;
+      r.msgEl.hidden = !text;
+      r.msgEl.dataset.tone = error ? 'error' : 'notice';
+      r.input.classList.toggle('is-invalid', !!error);
+      r.input.setAttribute('aria-invalid', error ? 'true' : 'false');
     }
     // Empty groups (all fields hidden) collapse out of the way.
     for (const g of root.querySelectorAll('.group')) {
@@ -217,19 +231,18 @@ function control(field, registry, onDirty) {
     setValue(field.id, readValue(field, input));
     onDirty?.();
   });
-  // Numbers are only clamped once the user leaves the field, so intermediate
-  // states such as "0." or "-" remain typeable.
-  if (field.type === 'number') {
-    input.addEventListener('blur', () => {
-      const clamped = clamp(field, Number(input.value));
-      if (Number.isFinite(clamped)) {
-        setValue(field.id, clamped);
-        input.value = String(clamped);
-      }
-    });
-  }
 
   wrapper.append(label, input);
+
+  // Validation message: one line under the control, red for an error the model
+  // cannot be built from, muted for a notice about what the input implies.
+  // Out-of-range numbers are reported here rather than being clamped, so the
+  // field always holds what the user actually typed.
+  const msgEl = document.createElement('div');
+  msgEl.className = 'field-msg';
+  msgEl.hidden = true;
+  wrapper.append(msgEl);
+
   if (field.hint) {
     const hint = document.createElement('div');
     hint.className = 'field-hint';
@@ -237,7 +250,7 @@ function control(field, registry, onDirty) {
     wrapper.append(hint);
   }
 
-  registry.push({ field, wrapper, input, unitEl });
+  registry.push({ field, wrapper, input, unitEl, msgEl });
   return wrapper;
 }
 
@@ -291,7 +304,7 @@ function checkbox(field, registry, onDirty) {
   });
 
   wrapper.append(input, text);
-  registry.push({ field, wrapper, input, unitEl: null });
+  registry.push({ field, wrapper, input, unitEl: null, msgEl: null });
   return wrapper;
 }
 
@@ -303,13 +316,4 @@ function readValue(field, input) {
     return input.value === '' || !Number.isFinite(n) ? input.value : n;
   }
   return input.value;
-}
-
-function clamp(field, n) {
-  if (!Number.isFinite(n)) return NaN;
-  let v = n;
-  if (field.min !== undefined) v = Math.max(field.min, v);
-  if (field.max !== undefined) v = Math.min(field.max, v);
-  if (field.step === 1) v = Math.round(v);
-  return v;
 }

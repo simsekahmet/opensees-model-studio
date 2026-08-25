@@ -397,7 +397,8 @@ export const SCHEMA = [
       { id: 'systemCmd', type: 'select', label: 'system', d: 'BandGeneral', options: opts(
         'BandGeneral', 'BandSPD', 'ProfileSPD', 'SuperLU', 'UmfPack', 'FullGeneral', 'SparseSYM',
         'Diagonal', 'MUMPS', 'PFEM', 'PythonSparse'),
-        hint: 'PFEM and PythonSparse need a matching analysis type or a Python solver object.' },
+        hint: 'PFEM needs a matching analysis type. PythonSparse solves in Python: the script '
+          + 'carries a SciPy solver object, so it also needs numpy and scipy installed.' },
       { id: 'testCmd', type: 'select', label: 'test', d: 'NormDispIncr', options: opts(
         'NormUnbalance', 'NormDispIncr', 'EnergyIncr',
         'RelativeNormUnbalance', 'RelativeNormDispIncr', 'RelativeTotalNormDispIncr', 'RelativeEnergyIncr',

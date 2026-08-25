@@ -8,9 +8,14 @@
 
 import {
   state, resetAll, moveNodes, clearNodeOffsets, setElementOverrides, clearElementOverrides,
+  undo, redo, subscribeHistory, exportProject, importProject,
+  storage, subscribeStorage, validateState, firstIssue,
 } from './state.js';
 import { renderForm } from './ui/form.js';
-import { initTheme, initTabs, toast, setStatus, downloadText, slug } from './ui/shell.js';
+import {
+  initTheme, initTabs, toast, setStatus, downloadText, slug, confirmDialog,
+} from './ui/shell.js';
+import { APP_VERSION } from './version.js';
 import {
   renderSections, renderData, renderInspector, renderSelectionSummary, renderNodeSelection,
 } from './ui/reports.js';
@@ -78,11 +83,80 @@ el('inspector-close').addEventListener('click', () => {
   viewer.clearSelection();
 });
 
-el('btn-reset').addEventListener('click', () => {
+/* Reset — asks first, and stays undoable afterwards. */
+for (const id of ['btn-reset', 'mi-reset']) el(id).addEventListener('click', askReset);
+
+async function askReset() {
+  closeMenus();
+  const ok = await confirmDialog({
+    title: 'Reset every input?',
+    message: 'All parameters go back to their defaults, and joint moves and member edits '
+      + 'are discarded. You can undo this afterwards, but exporting the project first is safer.',
+    confirmLabel: 'Reset',
+  });
+  if (!ok) return;
   resetAll();
-  toast('Inputs reset', 'All parameters are back to their defaults.', 'info');
+  toast('Inputs reset', 'All parameters are back to their defaults — press Undo to bring them back.', 'info');
   compile();
+}
+
+/* ─────────────────────────── undo / redo ────────────────────────────── */
+
+el('btn-undo').addEventListener('click', () => stepHistory(undo));
+el('btn-redo').addEventListener('click', () => stepHistory(redo));
+
+function stepHistory(step) {
+  // A focused field is not repainted by the form (it would fight the caret),
+  // so it has to let go before the state underneath it changes.
+  if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+  if (!step()) return;
+  compile();
+}
+
+subscribeHistory(({ undo: hasUndo, redo: hasRedo }) => {
+  el('btn-undo').disabled = !hasUndo;
+  el('btn-redo').disabled = !hasRedo;
 });
+
+/* ───────────────────────── project files ────────────────────────────── */
+
+el('mi-export').addEventListener('click', () => {
+  closeMenus();
+  downloadText(`${slug(state.projectName)}.osms.json`, exportProject());
+  toast('Project exported', 'Every input, joint move and member edit is in that file.', 'ok');
+});
+
+const importInput = el('import-file');
+el('mi-import').addEventListener('click', () => { closeMenus(); importInput.click(); });
+
+importInput.addEventListener('change', async () => {
+  const file = importInput.files?.[0];
+  importInput.value = '';
+  if (!file) return;
+  try {
+    const { version } = importProject(await file.text());
+    toast('Project opened', `${file.name} — written by version ${version}.`, 'ok');
+    compile();
+  } catch (err) {
+    toast('Could not open that file', err.message, 'error', 7000);
+  }
+});
+
+el('mi-download').addEventListener('click', () => { closeMenus(); download(); });
+el('mi-notebook').addEventListener('click', () => { closeMenus(); downloadNotebook(); });
+
+/* ─────────────────────── local storage health ───────────────────────── */
+
+el('foot-version').textContent = `v${APP_VERSION}`;
+
+subscribeStorage(paintStorage);
+paintStorage(storage);
+
+function paintStorage({ ok, reason }) {
+  el('foot-storage').hidden = ok;
+  if (ok) return;
+  toast('Changes are not being saved', `${reason} Export the project to keep it.`, 'warn', 9000);
+}
 
 const collapseAll = el('btn-collapse-all');
 collapseAll.textContent = 'Expand all';
@@ -124,17 +198,56 @@ for (const [id, key] of Object.entries(TOGGLES)) {
   el(id).addEventListener('change', (ev) => viewer.setOptions({ [key]: ev.target.checked }));
 }
 
-const viewMenuBtn = el('btn-view-menu');
-viewMenuBtn.addEventListener('click', (ev) => {
-  ev.stopPropagation();
-  const open = dom.viewMenu.hidden;
-  dom.viewMenu.hidden = !open;
-  viewMenuBtn.setAttribute('aria-expanded', String(open));
-});
+/* Popover menus — the view toggles and the topbar overflow behave the same. */
+const MENUS = [
+  { btn: el('btn-view-menu'), pop: dom.viewMenu },
+  { btn: el('btn-more'), pop: el('more-menu') },
+];
+
+for (const menu of MENUS) {
+  menu.btn.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    const open = menu.pop.hidden;
+    closeMenus();
+    menu.pop.hidden = !open;
+    menu.btn.setAttribute('aria-expanded', String(open));
+  });
+}
+
 document.addEventListener('click', (ev) => {
-  if (dom.viewMenu.hidden || dom.viewMenu.contains(ev.target)) return;
-  dom.viewMenu.hidden = true;
-  viewMenuBtn.setAttribute('aria-expanded', 'false');
+  for (const menu of MENUS) {
+    if (menu.pop.hidden || menu.pop.contains(ev.target)) continue;
+    menu.pop.hidden = true;
+    menu.btn.setAttribute('aria-expanded', 'false');
+  }
+});
+
+function closeMenus() {
+  for (const menu of MENUS) {
+    menu.pop.hidden = true;
+    menu.btn.setAttribute('aria-expanded', 'false');
+  }
+}
+
+/* ───────────────────── sidebar drawer (narrow screens) ──────────────── */
+
+const navToggle = el('btn-nav');
+const scrim = el('scrim');
+
+navToggle.addEventListener('click', () => setDrawer(!document.body.classList.contains('nav-open')));
+el('btn-nav-close').addEventListener('click', () => setDrawer(false));
+scrim.addEventListener('click', () => setDrawer(false));
+
+function setDrawer(open) {
+  document.body.classList.toggle('nav-open', open);
+  scrim.hidden = !open;
+  navToggle.setAttribute('aria-expanded', String(open));
+}
+
+// The drawer only exists below the breakpoint; widening the window must not
+// leave the page stuck behind a scrim.
+window.matchMedia('(min-width: 841px)').addEventListener('change', (ev) => {
+  if (ev.matches) setDrawer(false);
 });
 
 dom.selStory.addEventListener('change', () => viewer.setOptions({ story: Number(dom.selStory.value) }));
@@ -144,8 +257,16 @@ dom.selFrame.addEventListener('change', () => {
 });
 
 window.addEventListener('keydown', (ev) => {
-  if ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter') { ev.preventDefault(); compile(); }
-  if (ev.key === 'Escape') viewer.clearSelection();
+  const mod = ev.ctrlKey || ev.metaKey;
+  if (mod && ev.key === 'Enter') { ev.preventDefault(); compile(); }
+  if (ev.key === 'Escape') { viewer.clearSelection(); closeMenus(); setDrawer(false); }
+
+  // Undo and redo act on the model, not on the focused text field, so they are
+  // taken before the browser's own text history sees them.
+  const key = ev.key.toLowerCase();
+  if (mod && key === 'z' && !ev.shiftKey) { ev.preventDefault(); stepHistory(undo); }
+  else if (mod && ((key === 'z' && ev.shiftKey) || key === 'y')) { ev.preventDefault(); stepHistory(redo); }
+
   // Ctrl+R jumps straight to the move fields when joints are selected.
   if ((ev.ctrlKey || ev.metaKey) && (ev.key === 'r' || ev.key === 'R') && movePanel) {
     ev.preventDefault();
@@ -158,7 +279,18 @@ compile();
 /* ───────────────────────────── pipeline ─────────────────────────────── */
 
 function compile() {
-  setStatus('Compiling…', 'busy');
+  // Invalid input never reaches the builder: the sidebar already marks each
+  // offending field, and nothing is substituted on the user's behalf.
+  const check = validateState(state);
+  if (!check.ok) {
+    const n = Object.keys(check.errors).length;
+    setStatus(`${n} input error${n > 1 ? 's' : ''}`, 'error');
+    toast('Cannot build the model', `${firstIssue(check.errors)}${n > 1 ? ` (+${n - 1} more)` : ''}`,
+      'error', 7000);
+    return;
+  }
+
+  setStatus('Building…', 'busy');
 
   let next;
   try {
@@ -188,7 +320,7 @@ function compile() {
   const s = model.stats;
   el('legend-iso').hidden = !s.isolators;
   el('legend-damp').hidden = !s.dampers;
-  setStatus(`Compiled · ${s.nodes} nodes · ${s.elements} elements`, 'ok');
+  setStatus(`Model built · ${s.nodes} nodes · ${s.elements} elements`, 'ok');
   dom.formSummary.textContent =
     `${model.grid.nz} stories · ${model.grid.nx}×${model.grid.ny} bays · ${s.dof} DOF`;
 
@@ -212,7 +344,7 @@ function refreshPanels() {
 }
 
 function markStale() {
-  if (model) setStatus('Modified — press Compile', 'stale');
+  if (model) setStatus('Modified — press Build model', 'stale');
 }
 
 /** Mirrors the viewer's selection into the toolbar counter and the inspector. */
@@ -320,7 +452,7 @@ function populatePickers() {
 /* ──────────────────────────── script output ─────────────────────────── */
 
 function download() {
-  if (!script) return toast('Nothing to download', 'Compile the model first.', 'warn');
+  if (!script) return toast('Nothing to download', 'Build the model first.', 'warn');
   downloadText(`${slug(state.projectName)}.py`, script);
   const rec = getRecord();
   toast('Script saved',
@@ -332,7 +464,7 @@ function download() {
 
 /** The same script as a notebook: one code cell per section, headings above. */
 function downloadNotebook() {
-  if (!script) return toast('Nothing to download', 'Compile the model first.', 'warn');
+  if (!script) return toast('Nothing to download', 'Build the model first.', 'warn');
   downloadText(`${slug(state.projectName)}.ipynb`,
     toNotebook(script, { title: state.projectName || 'Frame Model' }));
   toast('Notebook saved', 'Run the cells in order; the last one wipes the model.', 'ok');

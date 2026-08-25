@@ -144,34 +144,12 @@ export const ISOLATOR_TYPES = {
     ],
   },
 
-  TFP: {
-    label: 'TFP — triple friction pendulum, explicit surfaces',
-    params: [
-      { key: 'R1', label: 'R1', unit: 'length', d: S(0.4, 400, 16), half: true },
-      { key: 'R2', label: 'R2', unit: 'length', d: S(1.5, 1500, 60), half: true },
-      { key: 'R3', label: 'R3', unit: 'length', d: S(1.5, 1500, 60), half: true },
-      { key: 'R4', label: 'R4', unit: 'length', d: S(0.4, 400, 16), half: true },
-      { key: 'Db1', label: 'Db1', unit: 'length', d: S(0.05, 50, 2), half: true },
-      { key: 'Db2', label: 'Db2', unit: 'length', d: S(0.30, 300, 12), half: true },
-      { key: 'Db3', label: 'Db3', unit: 'length', d: S(0.30, 300, 12), half: true },
-      { key: 'Db4', label: 'Db4', unit: 'length', d: S(0.05, 50, 2), half: true },
-      { key: 'd1', label: 'd1', unit: 'length', d: S(0.01, 10, 0.4), half: true },
-      { key: 'd2', label: 'd2', unit: 'length', d: S(0.01, 10, 0.4), half: true },
-      { key: 'd3', label: 'd3', unit: 'length', d: S(0.01, 10, 0.4), half: true },
-      { key: 'd4', label: 'd4', unit: 'length', d: S(0.01, 10, 0.4), half: true },
-      { key: 'mu1', label: 'μ1', d: 0.04, step: 0.005, half: true },
-      { key: 'mu2', label: 'μ2', d: 0.06, step: 0.005, half: true },
-      { key: 'mu3', label: 'μ3', d: 0.06, step: 0.005, half: true },
-      { key: 'mu4', label: 'μ4', d: 0.04, step: 0.005, half: true },
-      { key: 'h1', label: 'h1', unit: 'length', d: S(0.05, 50, 2), half: true },
-      { key: 'h2', label: 'h2', unit: 'length', d: S(0.05, 50, 2), half: true },
-      { key: 'h3', label: 'h3', unit: 'length', d: S(0.05, 50, 2), half: true },
-      { key: 'h4', label: 'h4', unit: 'length', d: S(0.05, 50, 2), half: true },
-      { key: 'H0', label: 'H0 — total height', unit: 'length', d: S(0.3, 300, 12), half: true },
-      { key: 'colLoad', label: 'colLoad — column load', unit: 'force', d: S(1000, 1e6, 220), half: true },
-      { key: 'K', label: 'K — vertical stiffness', unit: 'stiffness', d: S(1e7, 1e7, 57000) },
-    ],
-  },
+  // `TFP` is deliberately not offered. The element is created without
+  // complaint and the documented argument order is accepted, but the gravity
+  // analysis ends in an access violation inside the compiled TFP_Bearing —
+  // the process dies rather than reporting an error, so a script using it
+  // could never be trusted. Use `TripleFrictionPendulum` for the same
+  // mechanism; it is verified and takes its surfaces as L1/L2/L3.
 
   ElastomericX: {
     label: 'ElastomericX — rubber bearing, geometry based',

@@ -7,6 +7,7 @@
  */
 
 import { unitsOf } from '../units.js';
+import { APP_VERSION, PYTHON_SUPPORT } from '../version.js';
 import {
   CONCRETE_MODELS, STEEL_MODELS, materialArgs, constName, matKey,
 } from '../model/materials.js';
@@ -54,6 +55,7 @@ export function generateScript(s, model, gm = null) {
   const isolated = !!s.useIsolation;
   const chevron = !!s.useDampers && s.damperConfig === 'chevron';
   const isoH = isolated ? Number(s.isolatorHeight) || 0 : 0;
+  const pySparse = s.systemCmd === 'PythonSparse';
 
   /* ─────────────────────────────── header ──────────────────────────── */
   w(
@@ -65,7 +67,8 @@ export function generateScript(s, model, gm = null) {
     '',
     `Units       : ${u.force}, ${u.length} (stress in ${u.stress})`,
     `Sections    : ${s.sectionKind}`,
-    `Generated   : ${new Date().toISOString().slice(0, 19).replace('T', ' ')}`,
+    `Generated   : ${new Date().toISOString().slice(0, 19).replace('T', ' ')}`
+      + ` by OpenSees Model Studio ${APP_VERSION}`,
     '',
     'Global axes',
     '    X, Y  horizontal in plan; Z  vertical, positive upwards.',
@@ -79,12 +82,26 @@ export function generateScript(s, model, gm = null) {
     '    beams  X     x = +X,  y = +Z,  z = -Y',
     '    beams  Y     x = +Y,  y = +Z,  z = +X',
     '',
+    `Requires    : openseespy on Python ${PYTHON_SUPPORT.range} (tested on ${PYTHON_SUPPORT.tested}).`,
+    `              Python ${PYTHON_SUPPORT.unsupported} has no openseespy wheel yet and fails`,
+    '              on import with a DLL load error.',
+    ...(pySparse ? [
+      '              This model uses the PythonSparse solver, which needs NumPy',
+      '              and SciPy:  pip install numpy scipy',
+    ] : []),
+    '',
     'Run with:  python model.py',
     '"""',
     '',
     'import math',
     'import os',
     '',
+    ...(pySparse ? [
+      'import numpy as np',
+      'from scipy.sparse import csr_matrix',
+      'from scipy.sparse.linalg import splu',
+      '',
+    ] : []),
     'import openseespy.opensees as ops',
     ''
   );
@@ -562,11 +579,22 @@ export function generateScript(s, model, gm = null) {
       '               for j in range(NY_N) for i in range(NX_N)]',
       'all_elements = ops.getEleTags()',
       '',
+      // Reactions have to be read at whichever node actually carries the
+      // restraint. With base isolation the support drops below the bearing, so
+      // recording the superstructure base would sum to zero.
+      ...(isolated ? [
+        '# The restrained node is the foundation node under a bearing, and the',
+        '# column base everywhere else — reading the wrong one sums to zero.',
+        'support_nodes = [foundation_tag(i, j) if HAS_BEARING(i, j) else node_tag(0, i, j)',
+        '                 for j in range(NY_N) for i in range(NX_N)]',
+      ] : [
+        'support_nodes = [node_tag(0, i, j) for j in range(NY_N) for i in range(NX_N)]',
+      ]),
+      '',
       "ops.recorder('Node', '-file', os.path.join(OUT_DIR, 'node_disp.out'),",
       "             '-time', '-node', *floor_nodes, '-dof', 1, 2, 3, 'disp')",
       "ops.recorder('Node', '-file', os.path.join(OUT_DIR, 'reactions.out'),",
-      "             '-time', '-node', *[node_tag(0, i, j) for j in range(NY_N) for i in range(NX_N)],",
-      "             '-dof', 1, 2, 3, 'reaction')",
+      "             '-time', '-node', *support_nodes, '-dof', 1, 2, 3, 'reaction')",
       "ops.recorder('Element', '-file', os.path.join(OUT_DIR, 'element_forces.out'),",
       "             '-time', '-ele', *all_elements, 'globalForce')",
       ''
@@ -782,10 +810,56 @@ const chunk = (arr, n) => Array.from({ length: Math.ceil(arr.length / n) }, (_, 
 
 /* ═══════════════════════════════ analyses ═══════════════════════════ */
 
+/**
+ * `system('PythonSparse', …)` hands the linear solve back to Python. It is the
+ * one solver that takes an argument: a dictionary naming an object whose
+ * `solve()` OpenSees calls with the assembled matrix. The buffers arrive as
+ * memoryviews over the solver's own storage — read-only except `x`, which is
+ * where the answer goes.
+ */
+function emitPythonSparseSolver(w) {
+  w(
+    'class ScipySparseSolver:',
+    '    """Solves K x = b with SciPy, for ops.system(\'PythonSparse\', …).',
+    '',
+    '    OpenSees calls solve() with the matrix in compressed sparse row form.',
+    '    Only `x` is writable; the solution is written into it in place and a',
+    '    return value of 0 reports success.',
+    '    """',
+    '',
+    '    def solve(self, index_ptr, indices, values, rhs, x,',
+    '              num_eqn, nnz, matrix_status=None, storage_scheme=None, **kwargs):',
+    '        ptr = np.frombuffer(index_ptr, dtype=np.int32)',
+    '        idx = np.frombuffer(indices, dtype=np.int32)',
+    '        val = np.frombuffer(values, dtype=np.float64)',
+    '        b = np.frombuffer(rhs, dtype=np.float64)',
+    '        out = np.frombuffer(x, dtype=np.float64)',
+    '',
+    '        # Factorised on every call: the tangent changes from one iteration',
+    '        # to the next, and reusing a stale factorisation would be wrong in a',
+    '        # way nothing downstream could detect.',
+    '        matrix = csr_matrix((val, idx, ptr), shape=(num_eqn, num_eqn)).tocsc()',
+    '        out[:] = splu(matrix).solve(b)',
+    '        return 0',
+    '',
+    '',
+    'SPARSE_SOLVER = ScipySparseSolver()',
+    '',
+    ''
+  );
+}
+
 /** The solver stack, set once and reused by every case below. */
 function emitSolutionStrategy(w, s) {
   const extra = s.constraintsCmd === 'Penalty' ? ', PENALTY_A, PENALTY_A'
     : s.constraintsCmd === 'Lagrange' ? ', LAGRANGE_A, LAGRANGE_A' : '';
+
+  const pySparse = s.systemCmd === 'PythonSparse';
+  if (pySparse) emitPythonSparseSolver(w);
+
+  const systemCall = pySparse
+    ? "ops.system('PythonSparse', {'solver': SPARSE_SOLVER, 'scheme': 'CSR', 'writable': 'none'})"
+    : `ops.system(${py(s.systemCmd)})`;
 
   w('# Solver stack — shared by every case below.');
   if (s.constraintsCmd === 'Penalty') w(`PENALTY_A = ${pf(s.penaltyAlpha)}`);
@@ -794,7 +868,7 @@ function emitSolutionStrategy(w, s) {
     'def set_solver():',
     `    ops.constraints(${py(s.constraintsCmd)}${extra})`,
     `    ops.numberer(${py(s.numbererCmd)})`,
-    `    ops.system(${py(s.systemCmd)})`,
+    `    ${systemCall}`,
     `    ops.test(${py(s.testCmd)}, TOL, MAX_ITER, 0)`,
     `    ops.algorithm(${py(s.algorithmCmd)})`,
     '',
@@ -1030,15 +1104,19 @@ function emitSectionConsts(w, prefix, sec, u, fiber) {
     : sec.shape === 'ISection'
       ? `d = ${pf(sec.h)}, bf = ${pf(sec.bf)}, tf = ${pf(sec.tf)}, tw = ${pf(sec.tw)}`
       : `b = ${pf(sec.b)}, h = ${pf(sec.h)}`;
-  const modNote = fiber ? '' : ` · ${pf(sec.modifier)} × Ig`;
+  // Ig is the gross geometric inertia; Ie is what the elements actually use.
+  const zNote = fiber ? `Ig,z [${u.inertia}]`
+    : `Ie,z = ${pf(sec.modifier)} × Ig,z (${pf(sec.Iz)}) [${u.inertia}]`;
+  const yNote = fiber ? `Ig,y [${u.inertia}]`
+    : `Ie,y = ${pf(sec.modifier)} × Ig,y (${pf(sec.Iy)}) [${u.inertia}]`;
 
   w(
     `# ${label} — ${sec.shape}, ${dims} [${u.length}]`,
     `${prefix}_B  = ${pf(sec.b)}`,
     `${prefix}_H  = ${pf(sec.h)}`,
     `${prefix}_A  = ${pf(sec.A)}  # [${u.area}]`,
-    `${prefix}_IZ = ${pf(sec.IzEff)}  # [${u.inertia}]${modNote}`,
-    `${prefix}_IY = ${pf(sec.IyEff)}  # [${u.inertia}]${modNote}`,
+    `${prefix}_IZ = ${pf(sec.IzEff)}  # ${zNote}`,
+    `${prefix}_IY = ${pf(sec.IyEff)}  # ${yNote}`,
     `${prefix}_J  = ${pf(sec.J)}  # torsion constant [${u.inertia}]`,
     `${prefix}_AV = ${pf((5 / 6) * sec.A)}  # shear area`,
     ''

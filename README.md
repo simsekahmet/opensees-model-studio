@@ -1,11 +1,13 @@
 # OpenSees Model Studio
 
 A browser-based model builder for [OpenSeesPy](https://openseespydoc.readthedocs.io/).
-Define a space frame with forms instead of code, press **Compile**, and get a 3D
+Define a space frame with forms instead of code, press **Build model**, and get a 3D
 model, floor plans, elevations, dimensioned cross-sections, full node and element
 tables, and a runnable `.py` script — all from a static page.
 
 **Live app:** https://simsekahmet.github.io/opensees-model-studio/
+
+**Version 1.0.0** — see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -35,9 +37,26 @@ selection.
   coordinates.
 
 Both kinds of edit sit on top of the parametric grid rather than replacing it:
-they survive a recompile and later changes to bay widths or story heights, and
+they survive a rebuild and later changes to bay widths or story heights, and
 `Use model values` / `Back to grid` removes them. Every edit is written into the
-generated script on the next **Compile**.
+generated script on the next **Build model**.
+
+## Input, history and project files
+
+Nothing you type is silently corrected. A bay width of `0`, a negative story
+height or a typo is reported in red under the field and leaves the value exactly
+as entered; the model cannot be built while an error stands. A list that had to
+be padded or truncated to match the bay or story count says so in a note, so how
+the input was read is never a guess.
+
+Undo and redo sit in the top bar and answer to <kbd>Ctrl</kbd>+<kbd>Z</kbd> and
+<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd>. They cover form edits, joint moves,
+member edits and Reset, which asks for confirmation first.
+
+`Export project (.json)` writes every input, joint move and member edit to one
+file; `Import project…` reads it back, filling in anything a newer release added.
+The app also keeps its state in the browser's local storage — and tells you when
+it cannot, rather than losing the model when the tab closes.
 
 Everything you set in the sidebar maps onto a real OpenSeesPy command:
 
@@ -75,10 +94,11 @@ css/
   theme.css          design tokens, light and dark palettes, reset
   app.css            shell, forms, viewport, tables, code panel
 js/
-  main.js            entry point; wires the compile pipeline
+  main.js            entry point; wires the build pipeline
   schema.js          declarative catalogue of every parameter
-  state.js           flat parameter store, persisted to localStorage
+  state.js           parameter store: validation, undo history, project files
   units.js           unit systems (kN·m, N·mm, kip·in) and formatting
+  version.js         release number and the Python versions it targets
   model/
     sections.js      cross-section geometry, stiffness and fiber layout
     builder.js       grid → nodes, elements, loads, masses, diaphragms
@@ -87,9 +107,13 @@ js/
   viewer/
     viewer.js        WebGL scene, 3D/plan/elevation cameras, picking
   ui/
-    shell.js         theme, tabs, toasts, downloads
+    shell.js         theme, tabs, toasts, confirmations, downloads
     form.js          renders the sidebar from schema.js
     reports.js       Sections, Model Data and inspector panels
+tests/
+  generate.mjs       writes one script per variant, headlessly
+  run_variants.py    runs them against real openseespy
+  equilibrium.py     statics check on fixed and isolated bases
 ```
 
 Adding a new OpenSeesPy option means adding one entry to `js/schema.js` and one
@@ -124,19 +148,35 @@ beam Y  300000 + level · 1000 + index + 1
 
 ## Verification
 
-Every generated script is executed against the real `openseespy` before release.
-The current run is 97 model variants — one per material model, per isolator, per
-friction model, per damper type and configuration, per static and transient
-integrator, per constraint handler, plus moved joints and edited members: **0
-script errors**.
+The verification suite lives in [`tests/`](tests/) and you can run it yourself:
 
-Statics is checked end to end on the default model: the sum of the vertical base
-reactions the solver reports matches the slab load plus the member self weight to
-0.000000 %.
+```bash
+node tests/generate.mjs && python tests/run_variants.py && python tests/equilibrium.py
+```
 
-Two documented materials, `RambergOsgoodSteel` and `FRPConfinedConcrete`, are not
-offered: OpenSees prints *"temporarily removed from the compiled versions"* and
-aborts, so a script using them could never run.
+`generate.mjs` imports the app's own builder and code generator — the same
+modules the browser loads — and writes one script per variant. Around a hundred
+are produced, walking the catalogues rather than a hard-coded list, so every
+material model, isolator, friction model, damper, element, transformation,
+solver option and analysis case is covered, along with moved joints and edited
+members. `run_variants.py` then runs each one against a real `openseespy`.
+
+The last run on Python 3.12: **95 completed, 4 did not converge, 0 script
+errors.** The four are highly nonlinear material laws under a full gravity step
+— valid scripts, difficult models.
+
+`equilibrium.py` closes statics end to end: the sum of the vertical base
+reactions the solver reports is compared against the gravity load the builder
+applied, for a fixed base, a fully isolated base and a partly isolated one. All
+three balance to within the recorder's own output precision.
+
+Three documented entries are deliberately not offered, because verification
+showed they cannot run. `RambergOsgoodSteel` and `FRPConfinedConcrete` make
+OpenSees print *"temporarily removed from the compiled versions"* and abort. The
+`TFP` bearing is accepted at creation but then ends the gravity analysis in an
+access violation inside the compiled `TFP_Bearing` element — the process dies
+rather than reporting an error. Use `TripleFrictionPendulum` for the same
+mechanism; it is verified.
 
 ## Running the generated script
 
@@ -145,8 +185,15 @@ pip install openseespy
 python your_model.py
 ```
 
+| | |
+|---|---|
+| Python | **3.9 – 3.13.** Development and verification are done on **3.12**. |
+| Python 3.14 | Not supported — `openseespy` has no wheel for it yet, and the import fails with a DLL load error. |
+| Extra packages | None, unless you choose the `PythonSparse` solver, which needs `numpy` and `scipy`. |
+
 On Windows, `openseespy` ships prebuilt binaries that need the Microsoft Visual C++
-redistributable; install it if the import fails with a DLL load error.
+redistributable; install it if the import fails with a DLL load error on a
+supported Python version.
 
 ## Local development
 

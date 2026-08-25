@@ -56,6 +56,25 @@
 }
 .credit b { color: var(--text-2); font-weight: 600; }
 
+/* Undo / redo. Icon-only, and greyed out when there is nothing to step to. */
+.history-seg .seg-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; padding: 0;
+}
+.history-seg svg {
+  width: 15px; height: 15px;
+  fill: none; stroke: currentColor; stroke-width: 1.8;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+.seg-btn:disabled { opacity: .38; cursor: default; }
+.seg-btn:disabled:hover { background: var(--bg-2); color: var(--text-2); }
+
+/* The drawer handle and its matching close button exist only on narrow screens. */
+.nav-toggle, .nav-close { display: none; }
+.nav-close svg, .nav-toggle svg {
+  fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round;
+}
+
 /* ============================== Buttons ================================= */
 
 .btn {
@@ -90,6 +109,13 @@
 
 .btn-sm { height: 27px; padding: 0 10px; font-size: 12px; }
 
+.btn-danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+.btn-danger:hover { filter: brightness(1.07); background: var(--danger); }
+
 .btn-icon { width: 32px; padding: 0; justify-content: center; }
 .btn-icon svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; }
 html[data-theme="dark"]  .icon-sun  { display: none; }
@@ -118,6 +144,7 @@ html[data-theme="light"] .icon-moon { display: none; }
 .sidebar {
   display: flex;
   flex-direction: column;
+  min-width: 0;
   min-height: 0;
   background: var(--bg-1);
   border-right: 1px solid var(--line);
@@ -162,6 +189,22 @@ html[data-theme="light"] .icon-moon { display: none; }
   fill: none; stroke: var(--warn); stroke-width: 1.8;
   stroke-linecap: round; stroke-linejoin: round;
 }
+
+.foot-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 14px 8px;
+  font-size: 10.5px;
+  color: var(--text-3);
+  font-family: var(--mono);
+}
+.foot-storage {
+  color: var(--warn);
+  font-weight: 650;
+}
+.foot-storage::before { content: "▲ "; }
 
 /* ------------------------------ groups --------------------------------- */
 
@@ -215,6 +258,21 @@ html[data-theme="light"] .icon-moon { display: none; }
 }
 
 .field-hint { margin-top: 4px; font-size: 10.5px; color: var(--text-3); line-height: 1.4; }
+
+/* Validation message. Red means the model will not be built from this value;
+   the muted tone means the input is valid but implies something worth saying. */
+.field-msg {
+  display: flex;
+  gap: 5px;
+  margin-top: 5px;
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+.field-msg::before { content: ""; flex: none; }
+.field-msg[data-tone="error"] { color: var(--danger); font-weight: 550; }
+.field-msg[data-tone="error"]::before { content: "▲"; font-size: 8px; line-height: 1.7; }
+.field-msg[data-tone="notice"] { color: var(--text-3); }
+.field-msg[data-tone="notice"]::before { content: "•"; }
 
 .field-note {
   margin: 11px 0 2px;
@@ -301,10 +359,19 @@ html[data-theme="light"] .icon-moon { display: none; }
   background: var(--bg-1);
   border-bottom: 1px solid var(--line);
   flex: none;
+  /* The strip scrolls rather than wrapping or clipping, so every tab stays
+     reachable however narrow the window is. */
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
 }
+.tabs::-webkit-scrollbar { display: none; }
 .tab {
   border: 0;
   background: none;
+  flex: none;
+  white-space: nowrap;
   padding: 10px 13px 9px;
   font-size: 12.5px;
   font-weight: 550;
@@ -396,6 +463,24 @@ html[data-theme="light"] .icon-moon { display: none; }
 }
 .menu-item:hover { background: var(--bg-hover); }
 .menu-item input { accent-color: var(--accent); width: 13px; height: 13px; margin: 0; }
+
+/* Action rows, as used by the topbar overflow menu. */
+.menu-right { left: auto; right: 0; }
+.menu-action {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: none;
+  text-align: left;
+  padding: 7px 12px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text-1);
+  cursor: pointer;
+}
+.menu-action:hover { background: var(--bg-hover); }
+.menu-action.is-danger { color: var(--danger); }
+.menu-sep { height: 1px; background: var(--line-soft); margin: 5px 0; }
 
 .mini-select {
   height: 26px; padding: 0 24px 0 8px;
@@ -584,7 +669,7 @@ table.tbl tbody tr:hover td { background: var(--bg-2); color: var(--text-1); }
 /* section drawings */
 .sec-fig { display: flex; gap: 18px; align-items: flex-start; flex-wrap: wrap; }
 .sec-fig svg { flex: none; background: var(--bg-2); border: 1px solid var(--line-soft); border-radius: var(--r-md); }
-.sec-fig .kv { padding: 0; grid-template-columns: 118px 1fr; }
+.sec-fig .kv { padding: 0; grid-template-columns: minmax(0, 168px) 1fr; }
 
 .svg-outline { fill: color-mix(in srgb, var(--accent) 12%, transparent); stroke: var(--accent); stroke-width: 1.6; }
 .svg-core    { fill: none; stroke: var(--text-3); stroke-width: 1; stroke-dasharray: 4 3; }
@@ -646,6 +731,41 @@ table.tbl tbody tr:hover td { background: var(--bg-2); color: var(--text-1); }
 
 @keyframes toast-in { from { opacity: 0; transform: translateY(6px); } }
 
+/* ============================== Modal =================================== */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, .55);
+}
+
+.modal {
+  width: min(420px, 100%);
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-2);
+  padding: 18px 18px 15px;
+}
+.modal h3 { font-size: 14.5px; margin-bottom: 8px; }
+.modal p  { font-size: 12.5px; line-height: 1.55; color: var(--text-2); }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+
+/* Backdrop behind the sidebar drawer. It has no reason to exist on a wide
+   screen, so it is only ever displayed inside the drawer breakpoint. */
+.scrim {
+  display: none;
+  position: fixed;
+  inset: var(--topbar-h) 0 0;
+  z-index: 35;
+  background: rgba(0, 0, 0, .48);
+}
+
 /* ============================ Responsive ================================ */
 
 @media (max-width: 1080px) {
@@ -653,9 +773,79 @@ table.tbl tbody tr:hover td { background: var(--bg-2); color: var(--text-1); }
   .scene-legend { display: none; }
 }
 
+/* The byline is the first thing to go: it is credit, not a control. */
+@media (max-width: 1000px) {
+  .credit { display: none; }
+}
+
+/* Reset and Download also live in the overflow menu, so they can drop out of
+   the bar rather than pushing the primary action off the screen. */
+@media (max-width: 900px) {
+  .wide-only { display: none; }
+  .topbar { gap: 12px; }
+}
+
+/* Drawer layout. The sidebar leaves the grid and slides in over the viewport,
+   which is the only way a 336 px panel and a 3D view share a phone screen. */
 @media (max-width: 840px) {
-  .workspace { grid-template-columns: 1fr; grid-template-rows: 44vh 1fr; }
-  .sidebar { border-right: 0; border-bottom: 1px solid var(--line); }
+  .workspace { grid-template-columns: minmax(0, 1fr); }
+
+  .sidebar {
+    position: fixed;
+    top: var(--topbar-h);
+    bottom: 0;
+    left: 0;
+    width: min(86vw, 340px);
+    z-index: 40;
+    border-right: 1px solid var(--line);
+    box-shadow: var(--shadow-2);
+    transform: translateX(-102%);
+    transition: transform .22s ease;
+  }
+  body.nav-open .sidebar { transform: none; }
+  body.nav-open .scrim { display: block; }
+
+  .nav-toggle, .nav-close { display: inline-flex; }
+  .nav-close { width: 26px; height: 26px; }
+  .nav-close svg { width: 14px; height: 14px; }
+
   .brand-sub { display: none; }
   .topbar-status { display: none; }
+  .inspector { max-width: min(88vw, 320px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar { transition: none; }
+}
+
+/* Phone. Everything that is not the model, the tabs or the build button gets
+   out of the way, and the toolbar wraps onto as many rows as it needs. */
+@media (max-width: 640px) {
+  .topbar { gap: 8px; padding: 0 8px; }
+  .brand-text { display: none; }
+  .topbar-actions { gap: 6px; }
+
+  .tabs { padding: 0 6px; }
+  .tab { padding: 10px 10px 9px; font-size: 12px; }
+
+  .scene-toolbar { gap: 8px; padding: 7px 8px; }
+  .toolbar-spacer { display: none; }
+  .select-info { order: 9; width: 100%; }
+
+  .doc-scroll { padding: 14px 12px 36px; }
+  .card-grid { grid-template-columns: minmax(0, 1fr); }
+  .sec-fig { gap: 12px; }
+  .code-head { flex-wrap: wrap; gap: 8px; }
+  .toaster { left: 10px; right: 10px; }
+  .toast { max-width: none; }
+}
+
+/* Narrow phone. The primary action keeps its label — it is the one control
+   the page exists for — so the room comes from everything around it. */
+@media (max-width: 430px) {
+  .topbar { gap: 5px; padding: 0 6px; }
+  .btn { padding: 0 10px; }
+  .btn-icon { width: 30px; }
+  .history-seg .seg-btn { width: 27px; }
+  .stat { flex: 1 1 100%; }
 }

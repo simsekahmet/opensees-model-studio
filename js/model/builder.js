@@ -16,7 +16,7 @@
  *   beam Y  300000 + level·1000 + index + 1
  */
 
-import { expandList } from '../state.js';
+import { expandList, validateState, firstIssue } from '../state.js';
 import { allSections, sectionWithDims, EDITABLE_DIMS, usesFibers } from './sections.js';
 import { ISOLATOR_TYPES } from './devices.js';
 
@@ -43,14 +43,21 @@ export function buildModel(s) {
   const errors = [];
   const warnings = [];
 
+  // Nothing is built from an invalid input. The sidebar shows the same errors
+  // in place, so this is the backstop rather than the first line of defence.
+  const check = validateState(s);
+  if (!check.ok) {
+    return { ok: false, errors: Object.keys(check.errors).map((id) => firstIssue({ [id]: check.errors[id] })), warnings };
+  }
+
   /* ── grid ───────────────────────────────────────────────────────────── */
   const nx = clampInt(s.baysX, 1, 30);
   const ny = clampInt(s.baysY, 1, 30);
   const nz = clampInt(s.numStories, 1, 60);
 
-  const spansX = expandList(s.spanX, nx, 1);
-  const spansY = expandList(s.spanY, ny, 1);
-  const heights = expandList(s.storyHeight, nz, 1);
+  const spansX = expandList(s.spanX, nx);
+  const spansY = expandList(s.spanY, ny);
+  const heights = expandList(s.storyHeight, nz);
 
   const xs = cumulative(spansX);
   const ys = cumulative(spansY);

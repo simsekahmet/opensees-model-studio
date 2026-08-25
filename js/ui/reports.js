@@ -22,7 +22,7 @@ const FAMILY = {
 
 export function renderSections(root, s, model) {
   root.textContent = '';
-  if (!model) return empty(root, 'Compile the model to see the cross-sections.');
+  if (!model) return empty(root, 'Build the model to see the cross-sections.');
 
   const u = unitsOf(s.unitSystem);
   const { column, beamX, beamY, shared } = model.sections;
@@ -38,7 +38,7 @@ export function renderSections(root, s, model) {
   root.append(heading('Section properties'));
   root.append(wrapTable(table(
     ['Section', 'Shape', `b [${u.length}]`, `h [${u.length}]`, `A [${u.area}]`,
-     `Iz [${u.inertia}]`, `Iy [${u.inertia}]`, `J [${u.inertia}]`, 'Ig factor'],
+     `Ie,z [${u.inertia}]`, `Ie,y [${u.inertia}]`, `J [${u.inertia}]`, 'Stiffness modifier'],
     list.map((sec) => [
       shared && sec.family === 'beamX' ? 'Beam — X and Y' : sec.name,
       sec.shape, fmt(sec.b), fmt(sec.h), fmt(sec.A),
@@ -50,8 +50,12 @@ export function renderSections(root, s, model) {
   const note = document.createElement('p');
   note.className = 'tbl-note';
   note.textContent = usesFibers(s)
-    ? 'Fiber sections use the gross geometry; Iz and Iy above are reported for reference only.'
-    : 'Iz and Iy include the cracked-section modifiers set in the Sections group.';
+    ? 'Ig is the gross geometric inertia and Ie = stiffness modifier × Ig. Fiber sections are '
+      + 'built from the gross geometry, so both are reported for reference only — the modifier '
+      + 'does not reach the fibers.'
+    : 'Ig is the gross geometric inertia and Ie = stiffness modifier × Ig, with the modifier set '
+      + 'in the Sections group. The table lists Ie, which is what the generated script uses; the '
+      + 'cards above list both.';
   root.append(note);
 
   renderEditedSections(root, s, model, u);
@@ -86,7 +90,7 @@ function renderEditedSections(root, s, model, u) {
 
   root.append(wrapTable(table(
     ['Section', 'Shape', `b [${u.length}]`, `h [${u.length}]`, `A [${u.area}]`,
-     `Iz [${u.inertia}]`, `Iy [${u.inertia}]`, `J [${u.inertia}]`, 'Members'],
+     `Ie,z [${u.inertia}]`, `Ie,y [${u.inertia}]`, `J [${u.inertia}]`, 'Members'],
     groups.map((g) => [
       FAMILY[g.family],
       g.section.shape, fmt(g.section.b), fmt(g.section.h), fmt(g.section.A),
@@ -117,10 +121,15 @@ function sectionCard(sec, s, u, shared) {
          [`Flange tf [${u.length}]`, fmt(sec.tf)], [`Web tw [${u.length}]`, fmt(sec.tw)]]
       : [[`Width b [${u.length}]`, fmt(sec.b)], [`Depth h [${u.length}]`, fmt(sec.h)]];
 
+  // Gross and effective inertia are both listed, and named apart: the script
+  // uses Ie, so a card showing only Ig would not match the numbers downstream.
   rows.push(
     [`Area [${u.area}]`, fmt(sec.A)],
-    [`Iz [${u.inertia}]`, fmt(sec.Iz)],
-    [`Iy [${u.inertia}]`, fmt(sec.Iy)],
+    [`Ig,z — gross [${u.inertia}]`, fmt(sec.Iz)],
+    [`Ig,y — gross [${u.inertia}]`, fmt(sec.Iy)],
+    ['Stiffness modifier', fmt(sec.modifier, 2)],
+    [`Ie,z = modifier × Ig,z [${u.inertia}]`, fmt(sec.IzEff)],
+    [`Ie,y = modifier × Ig,y [${u.inertia}]`, fmt(sec.IyEff)],
     [`J [${u.inertia}]`, fmt(sec.J)],
     [`E [${u.stress}]`, fmt(sec.E)],
   );
@@ -246,7 +255,7 @@ function add(svg, tag, attrs) {
 
 export function renderData(root, s, model) {
   root.textContent = '';
-  if (!model) return empty(root, 'Compile the model to see its node, element and story tables.');
+  if (!model) return empty(root, 'Build the model to see its node, element and story tables.');
 
   const u = unitsOf(s.unitSystem);
   const st = model.stats;
@@ -368,8 +377,8 @@ export function renderInspector(panel, titleEl, bodyEl, element, s, handlers = {
       ? `Ø ${fmt(sec.D)} ${u.length}`
       : `${fmt(sec.b)} × ${fmt(sec.h)} ${u.length}`],
     ['Area', `${fmt(sec.A)} ${u.area}`],
-    ['Iz', `${fmt(sec.IzEff)} ${u.inertia}`],
-    ['Iy', `${fmt(sec.IyEff)} ${u.inertia}`],
+    ['Ie,z', `${fmt(sec.IzEff)} ${u.inertia}`],
+    ['Ie,y', `${fmt(sec.IyEff)} ${u.inertia}`],
     ['J', `${fmt(sec.J)} ${u.inertia}`],
     null,
     ['Slab load', `${fmt(element.w, 3)} ${u.lineLoad}`],
@@ -485,7 +494,7 @@ function memberEditor(elements, s, { onEdit, onResetEdit } = {}) {
 
   const hint = document.createElement('p');
   hint.className = 'move-hint';
-  hint.textContent = 'Applied on Compile, and written into the generated script.';
+  hint.textContent = 'Applied on Build model, and written into the generated script.';
   box.append(hint);
 
   return box;

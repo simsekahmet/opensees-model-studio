@@ -6,3 +6,6 @@ Thumbs.db
 
 # Local editor and tooling config
 .claude/
+
+# Generated test scripts and their run reports
+tests/out/

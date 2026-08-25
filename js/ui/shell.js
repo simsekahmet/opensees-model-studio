@@ -86,6 +86,64 @@ export function toast(title, message = '', tone = 'info', ms = 4200) {
   }, ms);
 }
 
+/* ────────────────────────────── confirm ─────────────────────────────── */
+
+/**
+ * A modal yes/no question. Used for the few actions that throw work away, so
+ * one stray click cannot clear a model that took an afternoon to set up.
+ *
+ * @returns {Promise<boolean>} true when the user confirms
+ */
+export function confirmDialog({ title, message, confirmLabel = 'Continue', tone = 'danger' }) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+
+    const box = document.createElement('div');
+    box.className = 'modal';
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-modal', 'true');
+
+    const h = document.createElement('h3');
+    h.textContent = title;
+
+    const p = document.createElement('p');
+    p.textContent = message;
+
+    const actions = document.createElement('div');
+    actions.className = 'modal-actions';
+
+    const cancel = document.createElement('button');
+    cancel.className = 'btn btn-ghost';
+    cancel.textContent = 'Cancel';
+
+    const ok = document.createElement('button');
+    ok.className = tone === 'danger' ? 'btn btn-danger' : 'btn btn-primary';
+    ok.textContent = confirmLabel;
+
+    actions.append(cancel, ok);
+    box.append(h, p, actions);
+    overlay.append(box);
+    document.body.append(overlay);
+    ok.focus();
+
+    const close = (answer) => {
+      document.removeEventListener('keydown', onKey);
+      overlay.remove();
+      resolve(answer);
+    };
+    const onKey = (ev) => {
+      if (ev.key === 'Escape') { ev.preventDefault(); close(false); }
+      if (ev.key === 'Enter') { ev.preventDefault(); close(true); }
+    };
+
+    cancel.addEventListener('click', () => close(false));
+    ok.addEventListener('click', () => close(true));
+    overlay.addEventListener('mousedown', (ev) => { if (ev.target === overlay) close(false); });
+    document.addEventListener('keydown', onKey);
+  });
+}
+
 /* ─────────────────────────── status indicator ───────────────────────── */
 
 export function setStatus(text, tone = 'idle') {
