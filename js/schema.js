@@ -191,13 +191,8 @@ export const SCHEMA = [
         showIf: (s) => s.beamShape === 'ISection', d: { 'kN-m': 0.016, 'N-mm': 16, 'kip-in': 0.63 } },
       { id: 'beamItw', type: 'number', gt: 0, label: 'Web thk. tw', unit: 'length', half: true,
         showIf: (s) => s.beamShape === 'ISection', d: { 'kN-m': 0.010, 'N-mm': 10, 'kip-in': 0.39 } },
-      { id: 'useSeparateGirder', type: 'check', d: false,
-        label: 'Different section for Y-direction beams',
-        hint: 'When off, X and Y beams share one section.' },
-      { id: 'girderB', type: 'number', gt: 0, label: 'Y-beam width b', unit: 'length', half: true,
-        showIf: (s) => s.useSeparateGirder, d: { 'kN-m': 0.30, 'N-mm': 300, 'kip-in': 12 } },
-      { id: 'girderH', type: 'number', gt: 0, label: 'Y-beam depth h', unit: 'length', half: true,
-        showIf: (s) => s.useSeparateGirder, d: { 'kN-m': 0.50, 'N-mm': 500, 'kip-in': 20 } },
+      // Y beams share the X beam's section. A different one is a per-member
+      // decision now: select the beams in the view and resize them there.
 
       { kind: 'sub', label: 'Elastic stiffness modifiers', showIf: (s) => !isFiber(s) },
       { id: 'modCol', type: 'number', gt: 0, label: 'Column Ig factor', step: 0.05, d: 0.70, half: true, showIf: (s) => !isFiber(s) },
@@ -352,14 +347,10 @@ export const SCHEMA = [
   {
     id: 'loads', title: 'Loads & Mass',
     fields: [
-      { id: 'deadFloor', type: 'number', min: 0, label: 'Floor dead load', unit: 'areaLoad', half: true,
+      { id: 'deadFloor', type: 'number', min: 0, label: 'Slab dead load', unit: 'areaLoad', half: true,
         d: { 'kN-m': 4.5, 'N-mm': 4.5e-3, 'kip-in': 6.5e-4 } },
-      { id: 'liveFloor', type: 'number', min: 0, label: 'Floor live load', unit: 'areaLoad', half: true,
+      { id: 'liveFloor', type: 'number', min: 0, label: 'Slab live load', unit: 'areaLoad', half: true,
         d: { 'kN-m': 2.0, 'N-mm': 2.0e-3, 'kip-in': 2.9e-4 } },
-      { id: 'deadRoof', type: 'number', min: 0, label: 'Roof dead load', unit: 'areaLoad', half: true,
-        d: { 'kN-m': 3.5, 'N-mm': 3.5e-3, 'kip-in': 5.1e-4 } },
-      { id: 'liveRoof', type: 'number', min: 0, label: 'Roof live load', unit: 'areaLoad', half: true,
-        d: { 'kN-m': 1.5, 'N-mm': 1.5e-3, 'kip-in': 2.2e-4 } },
       { id: 'loadDistribution', type: 'select', label: 'Slab load distribution', d: 'tributary', options: [
         { value: 'tributary', label: 'Tributary width onto beams' },
         { value: 'oneway-x',  label: 'One-way — spanning along X' },

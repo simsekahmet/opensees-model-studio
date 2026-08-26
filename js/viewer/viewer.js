@@ -305,11 +305,26 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
     if (model) rebuild();
   }
 
+  /**
+   * Frames the camera on the model.
+   *
+   * The centre is taken from the real extents rather than assuming the model
+   * starts at the origin — a joint moved to negative X pulls the building off
+   * that assumption, and the view ends up looking at empty space beside it.
+   */
   function fit() {
     if (!model) return;
-    const [mx, my, mz] = model.bounds.max;
-    const center = new THREE.Vector3(mx / 2, my / 2, mz / 2);
-    const radius = Math.max(0.5 * Math.hypot(mx, my, mz), 1e-3);
+
+    // In a plan or an elevation only the drawn subset matters: framing a single
+    // floor against the whole building would leave it a smudge in the middle.
+    const shown = visibleElements.length
+      ? extentsOfPoints(visibleElements.flatMap((e) => [e.p1, e.p2]))
+      : model.bounds;
+
+    const [x0, y0, z0] = shown.min;
+    const [x1, y1, z1] = shown.max;
+    const center = new THREE.Vector3((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
+    const radius = Math.max(0.5 * Math.hypot(x1 - x0, y1 - y0, z1 - z0), 1e-3);
 
     controls.target.copy(center);
 
@@ -490,6 +505,19 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
         picks.push({ object: mesh, elements: group, mode: 'instance' });
       }
     }
+  }
+
+  /** Bounding box of a set of points, as `{ min, max }`. */
+  function extentsOfPoints(points) {
+    const min = [Infinity, Infinity, Infinity];
+    const max = [-Infinity, -Infinity, -Infinity];
+    for (const p of points) {
+      for (let k = 0; k < 3; k++) {
+        if (p[k] < min[k]) min[k] = p[k];
+        if (p[k] > max[k]) max[k] = p[k];
+      }
+    }
+    return min[0] === Infinity ? model.bounds : { min, max };
   }
 
   /** Everything that changes the drawn prism. */

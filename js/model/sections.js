@@ -65,13 +65,12 @@ export function geometryFor(s, family) {
     return rectangle(num(s.colB), num(s.colH));
   }
 
-  const separate = !!s.useSeparateGirder && family === 'beamY';
-  if (s.beamShape === 'ISection' && !separate) {
+  // Both beam directions come from the same section. Where they differ it is a
+  // decision about particular members, made by selecting them in the view.
+  if (s.beamShape === 'ISection') {
     return iSection(num(s.beamIh), num(s.beamIbf), num(s.beamItf), num(s.beamItw));
   }
-  return separate
-    ? rectangle(num(s.girderB), num(s.girderH))
-    : rectangle(num(s.beamB), num(s.beamH));
+  return rectangle(num(s.beamB), num(s.beamH));
 }
 
 /**
@@ -101,8 +100,8 @@ export function sectionFor(s, family) {
 export function allSections(s) {
   const col = sectionFor(s, 'column');
   const bx = sectionFor(s, 'beamX');
-  const by = s.useSeparateGirder ? sectionFor(s, 'beamY') : { ...bx, family: 'beamY', name: familyName('beamY') };
-  return { column: col, beamX: bx, beamY: by, shared: !s.useSeparateGirder };
+  const by = { ...bx, family: 'beamY', name: familyName('beamY') };
+  return { column: col, beamX: bx, beamY: by, shared: true };
 }
 
 function familyName(family) {

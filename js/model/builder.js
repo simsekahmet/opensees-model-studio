@@ -295,11 +295,9 @@ export function buildModel(s) {
   const dlF = numOr(s.dlFactor, 1);
   const llF = numOr(s.llFactor, 1);
 
-  for (let level = 1; level <= nz; level++) {
-    const roof = level === nz;
-    const q = dlF * numOr(roof ? s.deadRoof : s.deadFloor, 0)
-            + llF * numOr(roof ? s.liveRoof : s.liveFloor, 0);
-    if (q === 0) continue;
+  const q = dlF * numOr(s.deadFloor, 0) + llF * numOr(s.liveFloor, 0);
+
+  for (let level = 1; level <= nz && q !== 0; level++) {
 
     for (let j = 0; j < ny; j++) {
       for (let i = 0; i < nx; i++) {
@@ -349,13 +347,11 @@ export function buildModel(s) {
 
   if (s.massSource === 'nodal') {
     const lam = numOr(s.massLiveFactor, 0.3);
+    const qMass = numOr(s.deadFloor, 0) + lam * numOr(s.liveFloor, 0);
     for (const n of nodes) {
       if (n.level === 0) continue;
-      const roof = n.level === nz;
-      const q = numOr(roof ? s.deadRoof : s.deadFloor, 0)
-              + lam * numOr(roof ? s.liveRoof : s.liveFloor, 0);
       const area = tributaryArea(spansX, spansY, n.i, n.j);
-      n.mass = (q * area) / g;
+      n.mass = (qMass * area) / g;
       totalMass += n.mass;
       storyMass[n.level] += n.mass;
     }

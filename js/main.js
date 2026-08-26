@@ -746,7 +746,9 @@ function onTabChange() { /* the scene keeps whatever view the pickers set */ }
 let sceneView = 'view3d';
 
 function setSceneView(next, focus = true) {
+  const changed = next !== sceneView;
   sceneView = next;
+
   if (next === 'plan') {
     viewer.setOptions({ view: 'plan', story: Number(dom.selStory.value) });
   } else if (next === 'elevation') {
@@ -755,7 +757,12 @@ function setSceneView(next, focus = true) {
   } else {
     viewer.setOptions({ view: 'view3d' });
   }
-  paintSceneView();
+
+  // Asking for a different view means asking to see it: the camera is framed on
+  // the model rather than left wherever the last one happened to be pointing.
+  // A rebuild keeps the camera; only a deliberate change re-frames it.
+  if (focus && (changed || next !== 'view3d')) viewer.fit();
+
   // Rebuilding must not drag the user away from the tab they were reading.
   if (focus) tabs.select('view3d');
 }

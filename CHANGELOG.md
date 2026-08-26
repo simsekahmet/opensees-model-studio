@@ -4,6 +4,30 @@ All notable changes to OpenSees Model Studio are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [semantic versioning](https://semver.org/).
 
+## [1.4.0] — 2026-08-26
+
+### Fixed
+
+- **The camera framed the model as if it started at the origin.** It centred on
+  half the maximum extent, so a joint moved into negative X left the view
+  pointing at empty space beside the building — the odd, half-off-screen picture
+  after switching back to 3D. It now uses the real extents, and in a plan or an
+  elevation it frames the drawn subset rather than the whole building.
+- **Switching view no longer keeps the last camera.** Asking for 3D, a plan or
+  an elevation means asking to see it, so the camera is framed on what was
+  asked for. A rebuild still keeps the view exactly as it was.
+
+### Removed
+
+- **`Different section for Y-direction beams`**, with its two dimension fields.
+  Y beams take the X beam's section; a beam that needs a different one is a
+  decision about particular members, made by selecting them in the view and
+  resizing them there.
+- **`Roof dead load` and `Roof live load`.** One slab load now covers every
+  floor including the roof, and the two remaining fields are named `Slab dead
+  load` and `Slab live load`. A roof that carries something different is set on
+  its own beams through the inspector's slab-load field.
+
 ## [1.3.0] — 2026-08-26
 
 ### Fixed

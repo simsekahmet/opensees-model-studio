@@ -7,7 +7,7 @@ tables, and a runnable `.py` script — all from a static page.
 
 **Live app:** https://simsekahmet.github.io/opensees-model-studio/
 
-**Version 1.3.0** — see [CHANGELOG.md](CHANGELOG.md).
+**Version 1.4.0** — see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
