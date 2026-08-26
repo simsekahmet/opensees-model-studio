@@ -8,15 +8,18 @@ const THEME_KEY = 'osms.theme';
 /* ─────────────────────────────── theme ──────────────────────────────── */
 
 export function initTheme(button, onChange) {
-  const saved = localStorage.getItem(THEME_KEY);
-  const preferred = saved
-    || (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
-  apply(preferred);
+  // Light is where the page starts. Someone who has chosen dark keeps it; the
+  // operating system's preference is not consulted, because a drawing tool that
+  // opens dark for half its users is two different products.
+  let saved = null;
+  try { saved = localStorage.getItem(THEME_KEY); }
+  catch { saved = null; }
+  apply(saved === 'dark' || saved === 'light' ? saved : 'light');
 
   button.addEventListener('click', () => {
     const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
     apply(next);
-    localStorage.setItem(THEME_KEY, next);
+    try { localStorage.setItem(THEME_KEY, next); } catch { /* private browsing */ }
     onChange?.(next);
   });
 
@@ -34,13 +37,12 @@ export function themeColor(name, fallback = '#888888') {
 /* ──────────────────────────────── tabs ──────────────────────────────── */
 
 /**
- * The 3D / Plan / Elevation tabs all share one WebGL panel — only the camera
- * mode changes — so the tab strip maps tab ids onto panel ids.
+ * Which panel each tab shows. Plan and elevation are not tabs: they are the
+ * same scene seen through a different camera, chosen with the story and
+ * elevation pickers in the toolbar.
  */
 const PANEL_OF = {
   view3d: 'panel-scene',
-  plan: 'panel-scene',
-  elevation: 'panel-scene',
   sections: 'panel-sections',
   data: 'panel-data',
   code: 'panel-code',
@@ -97,51 +99,121 @@ export function toast(title, message = '', tone = 'info', ms = 4200) {
  */
 export function confirmDialog({ title, message, confirmLabel = 'Continue', tone = 'danger' }) {
   return new Promise((resolve) => {
-    const overlay = document.createElement('div');
-    overlay.className = 'modal-overlay';
+    modal({ title, message, confirmLabel, tone, onDone: resolve });
+  });
+}
 
-    const box = document.createElement('div');
-    box.className = 'modal';
-    box.setAttribute('role', 'dialog');
-    box.setAttribute('aria-modal', 'true');
+/** The one modal every dialog above is a shape of. */
+function modal({ title, message, body, confirmLabel, tone, onDone, cancel = true, focus }) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
 
-    const h = document.createElement('h3');
-    h.textContent = title;
+  const box = document.createElement('div');
+  box.className = 'modal';
+  box.setAttribute('role', 'dialog');
+  box.setAttribute('aria-modal', 'true');
 
+  const h = document.createElement('h3');
+  h.textContent = title;
+  box.append(h);
+
+  if (message) {
     const p = document.createElement('p');
     p.textContent = message;
+    box.append(p);
+  }
+  if (body) box.append(body);
 
-    const actions = document.createElement('div');
-    actions.className = 'modal-actions';
+  const actions = document.createElement('div');
+  actions.className = 'modal-actions';
 
-    const cancel = document.createElement('button');
-    cancel.className = 'btn btn-ghost';
-    cancel.textContent = 'Cancel';
+  let cancelButton = null;
+  if (cancel) {
+    cancelButton = document.createElement('button');
+    cancelButton.className = 'btn btn-ghost';
+    cancelButton.textContent = 'Cancel';
+    actions.append(cancelButton);
+  }
 
-    const ok = document.createElement('button');
-    ok.className = tone === 'danger' ? 'btn btn-danger' : 'btn btn-primary';
-    ok.textContent = confirmLabel;
+  const ok = document.createElement('button');
+  ok.className = tone === 'danger' ? 'btn btn-danger' : 'btn btn-primary';
+  ok.textContent = confirmLabel;
+  actions.append(ok);
 
-    actions.append(cancel, ok);
-    box.append(h, p, actions);
-    overlay.append(box);
-    document.body.append(overlay);
-    ok.focus();
+  box.append(actions);
+  overlay.append(box);
+  document.body.append(overlay);
 
-    const close = (answer) => {
-      document.removeEventListener('keydown', onKey);
-      overlay.remove();
-      resolve(answer);
-    };
-    const onKey = (ev) => {
-      if (ev.key === 'Escape') { ev.preventDefault(); close(false); }
-      if (ev.key === 'Enter') { ev.preventDefault(); close(true); }
-    };
+  const first = focus ? focus() : ok;
+  (first || ok).focus();
+  if (first && first.select) first.select();
 
-    cancel.addEventListener('click', () => close(false));
-    ok.addEventListener('click', () => close(true));
-    overlay.addEventListener('mousedown', (ev) => { if (ev.target === overlay) close(false); });
-    document.addEventListener('keydown', onKey);
+  const close = (answer) => {
+    document.removeEventListener('keydown', onKey);
+    overlay.remove();
+    onDone(answer);
+  };
+  const onKey = (ev) => {
+    if (ev.key === 'Escape') { ev.preventDefault(); close(false); }
+    if (ev.key === 'Enter') { ev.preventDefault(); close(true); }
+  };
+
+  cancelButton?.addEventListener('click', () => close(false));
+  ok.addEventListener('click', () => close(true));
+  overlay.addEventListener('mousedown', (ev) => { if (ev.target === overlay) close(false); });
+  document.addEventListener('keydown', onKey);
+}
+
+/**
+ * A modal that asks for a few numbers. Resolves to `{ id: value }`, or null if
+ * the user backed out.
+ */
+export function promptDialog({ title, message, fields, confirmLabel = 'OK' }) {
+  return new Promise((resolve) => {
+    const inputs = new Map();
+    const body = document.createElement('div');
+    body.className = 'modal-fields';
+
+    for (const field of fields) {
+      const wrap = document.createElement('label');
+      wrap.className = 'modal-field';
+      const name = document.createElement('span');
+      name.textContent = field.label;
+      const input = document.createElement('input');
+      input.className = 'input';
+      input.type = 'text';
+      input.value = field.value ?? '';
+      input.autocomplete = 'off';
+      inputs.set(field.id, input);
+      wrap.append(name, input);
+      body.append(wrap);
+    }
+
+    modal({
+      title,
+      message,
+      body,
+      confirmLabel,
+      tone: 'primary',
+      focus: () => inputs.values().next().value,
+      onDone: (confirmed) => {
+        if (!confirmed) return resolve(null);
+        const out = {};
+        for (const [id, input] of inputs) out[id] = input.value.trim();
+        resolve(out);
+      },
+    });
+  });
+}
+
+/** A modal that only tells the user something. */
+export function infoDialog({ title, body, message = '' }) {
+  return new Promise((resolve) => {
+    modal({
+      title, message, body, confirmLabel: 'Close', tone: 'primary',
+      cancel: false,
+      onDone: () => resolve(true),
+    });
   });
 }
 

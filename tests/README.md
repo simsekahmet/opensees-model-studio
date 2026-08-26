@@ -20,6 +20,7 @@ error, so the suite cannot run there.
 
 ```bash
 node tests/generate.mjs
+node tests/roundtrip.mjs
 python tests/run_variants.py
 python tests/equilibrium.py
 python tests/results.py
@@ -83,6 +84,14 @@ uses — asserting that the numbers mean what the panel says they mean:
 
 A result reader that is never run against a real analysis is not a reader, it is
 a hope.
+
+**`roundtrip.mjs`** guards `Load model file`. It builds a model unlike the
+defaults — different materials, a circular column, isolators, dampers — moves a
+joint, resizes a member, deletes one and copies another, then sends the whole
+thing out through the generated script, the notebook and the project file and
+reads each one back. Every field is compared, and the rebuilt model must have
+the same nodes and elements. A script that was not written here has to be
+refused rather than half-loaded.
 
 ## Coverage
 

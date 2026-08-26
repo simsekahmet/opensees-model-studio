@@ -32,10 +32,12 @@ export function defaultsFor(unitSystem = DEFAULT_SYSTEM) {
     out[f.id] = (f.d && typeof f.d === 'object') ? f.d[unitSystem] : f.d;
   }
   out.unitSystem = unitSystem;
-  // Manual joint moves and per-member edits live outside the schema: they are
-  // keyed by node or element tag rather than being one named parameter.
-  out.nodeOffsets = {};
-  out.elementOverrides = {};
+  // Everything below lives outside the schema: it is keyed by tag, or is a
+  // list, rather than being one named parameter.
+  out.nodeOffsets = {};        // tag → [dx, dy, dz]
+  out.elementOverrides = {};   // tag → { b, h, …, w }
+  out.deletedElements = {};    // tag → true
+  out.addedElements = [];      // members copied off the grid — see replicate()
   return out;
 }
 
@@ -146,6 +148,100 @@ export function clearElementOverrides(tags = null) {
   emit({ id: 'elementOverrides', tags });
 }
 
+/**
+ * Removes members from the model. The grid still generates them, so the tags
+ * are remembered and skipped — both here and in the generated script — which
+ * keeps every other tag exactly where it was.
+ */
+export function deleteElements(tags) {
+  if (!tags.length) return;
+  mark();
+  const next = { ...state.deletedElements };
+  for (const tag of tags) next[tag] = true;
+  state.deletedElements = next;
+  persist();
+  emit({ id: 'deletedElements', tags });
+}
+
+/** Brings deleted members back; with no argument, all of them. */
+export function restoreElements(tags = null) {
+  mark();
+  if (!tags) state.deletedElements = {};
+  else {
+    const next = { ...state.deletedElements };
+    for (const tag of tags) delete next[tag];
+    state.deletedElements = next;
+  }
+  persist();
+  emit({ id: 'deletedElements', tags });
+}
+
+/**
+ * Copies members to a new position. The copies are free-standing: they carry
+ * their own end coordinates rather than a grid index, so they can land anywhere
+ * — another story, another bay, or half a bay across.
+ *
+ * @param {object[]} elements  members to copy, from the built model
+ * @param {number[]} delta     [dx, dy, dz] in model units
+ * @param {number} count       how many copies, each one delta further along
+ */
+export function replicate(elements, delta, count = 1) {
+  if (!elements.length || count < 1) return 0;
+  mark();
+
+  const added = [...state.addedElements];
+  let nextId = added.reduce((a, e) => Math.max(a, e.id || 0), 0) + 1;
+
+  for (let n = 1; n <= count; n++) {
+    const [dx, dy, dz] = delta.map((v) => v * n);
+    for (const e of elements) {
+      added.push({
+        id: nextId++,
+        kind: e.kind,
+        from: [e.p1[0] + dx, e.p1[1] + dy, e.p1[2] + dz],
+        to: [e.p2[0] + dx, e.p2[1] + dy, e.p2[2] + dz],
+        source: e.tag,
+      });
+    }
+  }
+
+  state.addedElements = added;
+  persist();
+  emit({ id: 'addedElements' });
+  return count * elements.length;
+}
+
+/** Removes copied members; with no argument, all of them. */
+export function clearAdded(ids = null) {
+  mark();
+  state.addedElements = ids
+    ? state.addedElements.filter((e) => !ids.includes(e.id))
+    : [];
+  persist();
+  emit({ id: 'addedElements' });
+}
+
+/** Everything the user placed by hand, rather than through the grid. */
+export function manualEdits(s = state) {
+  return {
+    moves: Object.keys(s.nodeOffsets || {}).length,
+    edits: Object.keys(s.elementOverrides || {}).length,
+    deleted: Object.keys(s.deletedElements || {}).length,
+    added: (s.addedElements || []).length,
+  };
+}
+
+/** Drops every by-hand change, leaving the parametric grid on its own. */
+export function clearManualEdits() {
+  mark();
+  state.nodeOffsets = {};
+  state.elementOverrides = {};
+  state.deletedElements = {};
+  state.addedElements = [];
+  persist();
+  emit({ id: '*', cleared: true });
+}
+
 /** Restores every field to its default in the current unit system. */
 export function resetAll() {
   mark();
@@ -222,6 +318,8 @@ function merge(saved) {
   // Fields added in a later version keep the default they were just given.
   merged.nodeOffsets = isPlainObject(saved.nodeOffsets) ? saved.nodeOffsets : {};
   merged.elementOverrides = isPlainObject(saved.elementOverrides) ? saved.elementOverrides : {};
+  merged.deletedElements = isPlainObject(saved.deletedElements) ? saved.deletedElements : {};
+  merged.addedElements = Array.isArray(saved.addedElements) ? saved.addedElements : [];
   return merged;
 }
 
@@ -258,9 +356,7 @@ export function exportProject() {
  * older release still opens. Throws `InputError` on anything unreadable.
  */
 export function importProject(text) {
-  let doc;
-  try { doc = JSON.parse(text); }
-  catch { throw new InputError('That file is not valid JSON.'); }
+  const doc = readProjectFile(text);
 
   const saved = isPlainObject(doc) && isPlainObject(doc.state) ? doc.state : doc;
   if (!isPlainObject(saved) || saved.unitSystem === undefined) {
@@ -271,6 +367,55 @@ export function importProject(text) {
   replace(merge(saved));
   emit({ id: '*', imported: true });
   return { version: doc && doc.version ? String(doc.version) : 'unknown' };
+}
+
+/** The comment lines a generated script carries its model definition in. */
+const PROJECT_MARKER = '# osms:';
+
+/**
+ * Reads a project out of whatever the user handed over: a `.json` project, a
+ * generated `.py` script, or a generated `.ipynb` notebook. The last two carry
+ * the definition in comments, so the file someone keeps to run is the same file
+ * they can reopen.
+ */
+function readProjectFile(text) {
+  const trimmed = String(text ?? '').trimStart();
+
+  if (trimmed.startsWith('{')) {
+    let doc;
+    try { doc = JSON.parse(text); }
+    catch { throw new InputError('That file is not valid JSON.'); }
+
+    // A notebook is JSON too — its cells hold the script, comments and all.
+    if (isPlainObject(doc) && Array.isArray(doc.cells)) {
+      const source = doc.cells
+        .flatMap((cell) => (Array.isArray(cell.source) ? cell.source : [cell.source || '']))
+        .join('');
+      return fromScript(source, 'notebook');
+    }
+    return doc;
+  }
+
+  return fromScript(text, 'script');
+}
+
+function fromScript(source, what) {
+  const payload = source
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith(PROJECT_MARKER))
+    .map((line) => line.slice(PROJECT_MARKER.length).trim())
+    .join('');
+
+  if (!payload) {
+    throw new InputError(
+      `That ${what} carries no model definition. Only scripts generated by OpenSees Model `
+      + 'Studio 1.2 or later can be loaded back — they keep the definition in a comment '
+      + 'block at the end of the file.'
+    );
+  }
+  try { return JSON.parse(payload); }
+  catch { throw new InputError(`The model definition in that ${what} is damaged and cannot be read.`); }
 }
 
 /* ──────────────────────────── undo / redo ───────────────────────────── */

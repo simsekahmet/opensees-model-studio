@@ -1,6 +1,6 @@
 {
   "name": "opensees-model-studio",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "A browser-based model builder for OpenSeesPy.",
   "author": "Ahmet Şimşek",
   "license": "CC-BY-NC-4.0",
@@ -8,8 +8,9 @@
   "type": "module",
   "scripts": {
     "generate": "node tests/generate.mjs",
-    "test": "node tests/generate.mjs && python tests/run_variants.py && python tests/equilibrium.py && python tests/results.py",
+    "test": "node tests/generate.mjs && node tests/roundtrip.mjs && python tests/run_variants.py && python tests/equilibrium.py && python tests/results.py",
     "serve": "python -m http.server 8123",
-    "results": "python tests/results.py"
+    "results": "python tests/results.py",
+    "roundtrip": "node tests/roundtrip.mjs"
   }
 }

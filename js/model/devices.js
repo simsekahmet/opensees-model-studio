@@ -153,8 +153,7 @@ export const ISOLATOR_TYPES = {
 
   ElastomericX: {
     label: 'ElastomericX — rubber bearing, geometry based',
-    partialDOF: true,
-    note: 'Carries shear only — it supplies no vertical or torsional stiffness, so on its own it leaves the isolation level with a zero-energy mode. Pair it with a companion element, or use one of the bearings that take -P, -T, -My and -Mz.',
+    note: 'Derives its own stiffness from the bearing geometry and models the axial response — cavitation and buckling included — so it needs no companion element.',
     params: [
       { key: 'Fy', label: 'Fy — yield force', unit: 'force', d: QD, half: true },
       { key: 'alpha', label: 'α — hardening ratio', d: 0.05, step: 0.005, half: true },
@@ -170,8 +169,7 @@ export const ISOLATOR_TYPES = {
 
   LeadRubberX: {
     label: 'LeadRubberX — lead rubber bearing, geometry based',
-    partialDOF: true,
-    note: 'Carries shear only — it supplies no vertical or torsional stiffness, so on its own it leaves the isolation level with a zero-energy mode. Pair it with a companion element, or use one of the bearings that take -P, -T, -My and -Mz.',
+    note: 'Derives its own stiffness from the bearing geometry and models the axial response — cavitation and buckling included — so it needs no companion element.',
     params: [
       { key: 'Fy', label: 'Fy — yield force', unit: 'force', d: QD, half: true },
       { key: 'alpha', label: 'α — hardening ratio', d: 0.05, step: 0.005, half: true },
@@ -187,8 +185,7 @@ export const ISOLATOR_TYPES = {
 
   HDR: {
     label: 'HDR — high damping rubber bearing',
-    partialDOF: true,
-    note: 'Carries shear only — it supplies no vertical or torsional stiffness, so on its own it leaves the isolation level with a zero-energy mode. Pair it with a companion element, or use one of the bearings that take -P, -T, -My and -Mz.',
+    note: 'Derives its own stiffness from the bearing geometry and models the axial response — cavitation and buckling included — so it needs no companion element.',
     params: [
       { key: 'Gr', label: 'Gr — shear modulus', unit: 'stress', d: GR, half: true },
       { key: 'Kbulk', label: 'Kbulk', unit: 'stress', d: KBULK, half: true },

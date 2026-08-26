@@ -8,12 +8,14 @@
 
 import {
   state, resetAll, moveNodes, clearNodeOffsets, setElementOverrides, clearElementOverrides,
+  deleteElements, replicate, manualEdits, clearManualEdits,
   undo, redo, subscribeHistory, exportProject, importProject,
   storage, subscribeStorage, validateState, firstIssue,
 } from './state.js';
 import { renderForm } from './ui/form.js';
 import {
-  initTheme, initTabs, toast, setStatus, downloadText, slug, confirmDialog,
+  initTheme, initTabs, toast, setStatus, downloadText, slug,
+  confirmDialog, promptDialog, infoDialog,
 } from './ui/shell.js';
 import { APP_VERSION } from './version.js';
 import {
@@ -26,7 +28,7 @@ import { generateScript } from './codegen/openseespy.js';
 import { toNotebook } from './codegen/notebook.js';
 import { getRecord, subscribeGM, exportSeries, scriptFileName } from './model/groundmotion.js';
 import { createViewer } from './viewer/viewer.js';
-import { fmt } from './units.js';
+import { fmt, unitsOf } from './units.js';
 
 const el = (id) => document.getElementById(id);
 
@@ -92,10 +94,11 @@ for (const id of ['btn-reset', 'mi-reset']) el(id).addEventListener('click', ask
 async function askReset() {
   closeMenus();
   const ok = await confirmDialog({
-    title: 'Reset every input?',
-    message: 'All parameters go back to their defaults, and joint moves and member edits '
-      + 'are discarded. You can undo this afterwards, but exporting the project first is safer.',
-    confirmLabel: 'Reset',
+    title: 'Start over?',
+    message: 'This puts every input back to where it started and throws away the joints you '
+      + 'moved, the members you resized, deleted or copied. Undo will bring it back if you '
+      + 'change your mind — but if the model took a while, save it first.',
+    confirmLabel: 'Start over',
   });
   if (!ok) return;
   resetAll();
@@ -145,6 +148,24 @@ importInput.addEventListener('change', async () => {
   }
 });
 
+const loadInput = el('load-file');
+el('mi-load').addEventListener('click', () => { closeMenus(); loadInput.click(); });
+
+loadInput.addEventListener('change', async () => {
+  const file = loadInput.files?.[0];
+  loadInput.value = '';
+  if (!file) return;
+  try {
+    const { version } = importProject(await file.text());
+    compile();
+    tabs.select('view3d');
+    toast('Model loaded', `${file.name} — written by version ${version}. Its sections, `
+      + 'materials and analysis settings are now in the panel on the left.', 'ok', 7000);
+  } catch (err) {
+    toast('Could not load that model', err.message, 'error', 10000);
+  }
+});
+
 el('mi-download').addEventListener('click', () => { closeMenus(); download(); });
 el('mi-notebook').addEventListener('click', () => { closeMenus(); downloadNotebook(); });
 
@@ -168,8 +189,8 @@ async function ingestResults(files) {
     return;
   }
   viewer.setResults(results);
+  resetOverlay();
   paintResults();
-  paintOverlayControls();
   const n = Object.keys(results.series).length;
   toast('Results loaded', `${n} file${n > 1 ? 's' : ''} — the deformed shape and mode shapes `
     + 'are now available in the 3D view.', 'ok', 6000);
@@ -182,10 +203,12 @@ function paintResults() {
     onClear: () => {
       results = null;
       viewer.setResults(null);
+      resetOverlay();
       paintResults();
-      paintOverlayControls();
       toast('Results cleared', 'The model itself is untouched.', 'info', 2500);
     },
+    overlay,
+    onOverlay: (patch) => { setOverlay(patch); tabs.select('view3d'); },
     onExport: (name) => {
       downloadText(`${slug(state.projectName)}-${name.replace(/\.out$/, '')}.csv`,
         toCsv(results, name));
@@ -194,71 +217,26 @@ function paintResults() {
   });
 }
 
-paintResults();
-
-/* ── result overlays in the 3D scene ─────────────────────────────────── */
-
-const deformSelect = el('sel-deform');
-const modeSelect = el('sel-mode');
-const scaleRange = el('rng-deform-scale');
-const animateToggle = el('tg-animate');
-const diagramSelect = el('sel-diagram');
-
-// `paintOverlayControls` pushes the mode through to the viewer, so the handler
-// only has to decide which controls belong on screen.
-deformSelect.addEventListener('change', paintOverlayControls);
-modeSelect.addEventListener('change', () => viewer.setOptions({ modeNumber: Number(modeSelect.value) }));
-scaleRange.addEventListener('input', () => viewer.setOptions({ deformScale: Number(scaleRange.value) }));
-animateToggle.addEventListener('change', () => viewer.setOptions({ animate: animateToggle.checked }));
-diagramSelect.addEventListener('change', () => viewer.setOptions({ diagram: diagramSelect.value || null }));
+/* ── result overlays, driven from the Results panel ──────────────────── */
 
 /**
- * The overlay controls exist only when there is something behind them: no
- * results means no deformed shape, and no recorded modes means no mode picker.
+ * What the 3D view is showing of the results. It is kept here rather than in
+ * the panel so that clearing the results, or loading a new set, cannot leave
+ * the scene drawing something that is no longer there.
  */
-function paintOverlayControls() {
-  const hasResults = !!results;
-  const modes = results && results.modeShapes ? [...results.modeShapes.keys()].sort((a, b) => a - b) : [];
-  const hasForces = !!(results && results.has('element_local_envelope.out'));
+const overlay = { deform: 'none', modeNumber: 1, deformScale: 1, animate: false, diagram: null };
 
-  el('deform-group').hidden = !hasResults;
-  el('diagram-group').hidden = !hasForces;
-
-  if (!hasResults) {
-    deformSelect.value = 'none';
-    diagramSelect.value = '';
-    animateToggle.checked = false;
-    return;
-  }
-
-  // A mode shape option that would draw nothing is worse than no option.
-  const modeOption = [...deformSelect.options].find((o) => o.value === 'mode');
-  modeOption.disabled = !modes.length;
-  if (!modes.length && deformSelect.value === 'mode') deformSelect.value = 'displaced';
-
-  if (modeSelect.options.length !== modes.length) {
-    modeSelect.textContent = '';
-    const periods = (results.cases.modal && results.cases.modal.periods) || [];
-    for (const n of modes) {
-      const o = document.createElement('option');
-      o.value = String(n);
-      const period = periods[n - 1];
-      o.textContent = period ? `Mode ${n} — ${fmt(period, 4)} s` : `Mode ${n}`;
-      modeSelect.append(o);
-    }
-  }
-
-  const isMode = deformSelect.value === 'mode';
-  const isDeformed = deformSelect.value !== 'none';
-  modeSelect.hidden = !isMode;
-  el('lbl-animate').hidden = !isMode;
-  scaleRange.hidden = !isDeformed;
-  el('lbl-deform-scale').hidden = !isDeformed;
-
-  viewer.setOptions({ deform: deformSelect.value });
+function setOverlay(patch) {
+  Object.assign(overlay, patch);
+  viewer.setOptions(patch);
 }
 
-paintOverlayControls();
+function resetOverlay() {
+  Object.assign(overlay, { deform: 'none', modeNumber: 1, deformScale: 1, animate: false, diagram: null });
+  viewer.setOptions(overlay);
+}
+
+paintResults();
 
 /* ─────────────────────── local storage health ───────────────────────── */
 
@@ -287,6 +265,7 @@ for (const btn of document.querySelectorAll('.seg-btn[data-display]')) {
   btn.addEventListener('click', () => {
     for (const b of document.querySelectorAll('.seg-btn[data-display]')) b.classList.toggle('is-active', b === btn);
     viewer.setOptions({ display: btn.dataset.display });
+    saveViewOptions();
   });
 }
 
@@ -309,9 +288,53 @@ const TOGGLES = {
   'tg-supports': 'supports',
   'tg-axes': 'axes',
 };
-for (const [id, key] of Object.entries(TOGGLES)) {
-  el(id).addEventListener('change', (ev) => viewer.setOptions({ [key]: ev.target.checked }));
+
+const VIEW_KEY = 'osms.view.v1';
+
+/**
+ * What is on screen is a decision the user makes once. It is remembered across
+ * builds and across sessions, so changing a bay width does not also turn the
+ * labels back on.
+ */
+function loadViewOptions() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(VIEW_KEY) || 'null'); }
+  catch { saved = null; }
+  if (!saved || typeof saved !== 'object') return;
+
+  const patch = {};
+  for (const [id, key] of Object.entries(TOGGLES)) {
+    if (typeof saved[key] !== 'boolean') continue;
+    patch[key] = saved[key];
+    el(id).checked = saved[key];
+  }
+  if (saved.display === 'wireframe' || saved.display === 'extruded') {
+    patch.display = saved.display;
+    for (const b of document.querySelectorAll('.seg-btn[data-display]')) {
+      b.classList.toggle('is-active', b.dataset.display === saved.display);
+    }
+  }
+  viewer.setOptions(patch);
 }
+
+function saveViewOptions() {
+  const saved = { display: activeDisplay() };
+  for (const [id, key] of Object.entries(TOGGLES)) saved[key] = el(id).checked;
+  try { localStorage.setItem(VIEW_KEY, JSON.stringify(saved)); }
+  catch { /* the storage warning already covers this */ }
+}
+
+const activeDisplay = () =>
+  document.querySelector('.seg-btn[data-display].is-active')?.dataset.display || 'wireframe';
+
+for (const [id, key] of Object.entries(TOGGLES)) {
+  el(id).addEventListener('change', (ev) => {
+    viewer.setOptions({ [key]: ev.target.checked });
+    saveViewOptions();
+  });
+}
+
+el('mi-fit').addEventListener('click', () => { closeMenus(); viewer.fit(); });
 
 /* Popover menus — the view toggles and the topbar overflow behave the same. */
 const MENUS = [
@@ -365,12 +388,6 @@ window.matchMedia('(min-width: 841px)').addEventListener('change', (ev) => {
   if (ev.matches) setDrawer(false);
 });
 
-dom.selStory.addEventListener('change', () => viewer.setOptions({ story: Number(dom.selStory.value) }));
-dom.selFrame.addEventListener('change', () => {
-  const [axis, index] = dom.selFrame.value.split(':');
-  viewer.setOptions({ frame: { axis, index: Number(index) } });
-});
-
 window.addEventListener('keydown', (ev) => {
   const mod = ev.ctrlKey || ev.metaKey;
   if (mod && ev.key === 'Enter') { ev.preventDefault(); compile(); }
@@ -382,18 +399,169 @@ window.addEventListener('keydown', (ev) => {
   if (mod && key === 'z' && !ev.shiftKey) { ev.preventDefault(); stepHistory(undo); }
   else if (mod && ((key === 'z' && ev.shiftKey) || key === 'y')) { ev.preventDefault(); stepHistory(redo); }
 
-  // Ctrl+R jumps straight to the move fields when joints are selected.
-  if ((ev.ctrlKey || ev.metaKey) && (ev.key === 'r' || ev.key === 'R') && movePanel) {
+  // Ctrl+R moves joints when joints are selected, and copies members when
+  // members are. Both are "put this somewhere else", so they share the key.
+  if (mod && key === 'r') {
     ev.preventDefault();
-    movePanel.focus();
+    if (movePanel) movePanel.focus();
+    else askReplicate();
   }
+
+  if (typing(ev.target)) return;
+
+  if (ev.key === 'Delete' || ev.key === 'Backspace') { ev.preventDefault(); deleteSelection(); }
+  if (key === 'f') { ev.preventDefault(); viewer.fit(); }
+  if (key === '?' || (ev.shiftKey && key === '/')) { ev.preventDefault(); showShortcuts(); }
 });
 
-compile();
+/** True while the keystroke belongs to a field the user is filling in. */
+function typing(target) {
+  if (!(target instanceof HTMLElement)) return false;
+  return target.isContentEditable
+    || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
+}
+
+/* ─────────────────── deleting and copying members ───────────────────── */
+
+function deleteSelection() {
+  const tags = viewer.getSelection();
+  if (!tags.length) {
+    return toast('Nothing selected', 'Pick the members to delete first.', 'info', 2500);
+  }
+  deleteElements(tags);
+  compile();
+  toast(`${tags.length} member${tags.length > 1 ? 's' : ''} deleted`,
+    'The remaining tags are unchanged. Ctrl+Z brings them back.', 'ok');
+}
+
+/**
+ * Copies the selected members to a new position. The offset is given in model
+ * units along the global axes, so "one story up" is simply the story height.
+ */
+async function askReplicate() {
+  const tags = viewer.getSelection();
+  if (!tags.length) {
+    return toast('Nothing selected', 'Pick the members to copy first.', 'info', 2500);
+  }
+  const picked = model.elements.filter((e) => tags.includes(e.tag));
+  if (!picked.length) return;
+
+  const u = unitsOf(state.unitSystem);
+  const answer = await promptDialog({
+    title: `Copy ${picked.length} member${picked.length > 1 ? 's' : ''}`,
+    message: 'Each copy is placed this far from the one before it, along the global axes. '
+      + 'A copy carries the member only — no slab load and no tributary mass.',
+    fields: [
+      { id: 'dx', label: `dX [${u.length}]`, value: '0' },
+      { id: 'dy', label: `dY [${u.length}]`, value: '0' },
+      { id: 'dz', label: `dZ [${u.length}]`, value: fmt(model.grid.heights[0] || 1, 4) },
+      { id: 'count', label: 'Copies', value: '1' },
+    ],
+    confirmLabel: 'Copy',
+  });
+  if (!answer) return;
+
+  const delta = ['dx', 'dy', 'dz'].map((k) => Number(answer[k]));
+  const count = Math.round(Number(answer.count));
+  if (delta.some((v) => !Number.isFinite(v)) || !Number.isFinite(count) || count < 1) {
+    return toast('Those numbers cannot be used', 'Give a distance on each axis and a whole '
+      + 'number of copies.', 'error', 6000);
+  }
+  if (delta.every((v) => v === 0)) {
+    return toast('Nowhere to copy to', 'A copy on top of the original would be a duplicate '
+      + 'member in the same place.', 'warn', 6000);
+  }
+
+  const made = replicate(picked, delta, count);
+  compile();
+  toast(`${made} member${made > 1 ? 's' : ''} copied`,
+    'They are written into the script as free-standing members.', 'ok');
+}
+
+/* ───────────────────────── keyboard shortcuts ───────────────────────── */
+
+const SHORTCUTS = [
+  ['Ctrl + Enter', 'Build the model'],
+  ['Ctrl + Z', 'Undo'],
+  ['Ctrl + Shift + Z', 'Redo'],
+  ['Ctrl + R', 'Move the selected joints, or copy the selected members'],
+  ['Delete', 'Delete the selected members'],
+  ['F', 'Fit the view to the model'],
+  ['Esc', 'Clear the selection and close any menu'],
+  ['?', 'This list'],
+  ['Left drag', 'Select — left to right takes what is inside, right to left what it touches'],
+  ['Ctrl / Shift + drag', 'Add to the selection'],
+  ['Middle drag', 'Pan'],
+  ['Right drag', 'Orbit'],
+  ['Wheel', 'Zoom'],
+];
+
+el('mi-shortcuts').addEventListener('click', () => { closeMenus(); showShortcuts(); });
+
+function showShortcuts() {
+  const list = document.createElement('dl');
+  list.className = 'shortcut-list';
+  for (const [keys, what] of SHORTCUTS) {
+    const dt = document.createElement('dt');
+    for (const part of keys.split(' + ')) {
+      const kbd = document.createElement('kbd');
+      kbd.textContent = part;
+      dt.append(kbd);
+    }
+    const dd = document.createElement('dd');
+    dd.textContent = what;
+    list.append(dt, dd);
+  }
+  infoDialog({ title: 'Keyboard and mouse', body: list });
+}
 
 /* ───────────────────────────── pipeline ─────────────────────────────── */
 
-function compile() {
+/** The fields that decide where every joint of the grid lands. */
+const gridSignature = (s) =>
+  [s.baysX, s.baysY, s.numStories, s.spanX, s.spanY, s.storyHeight, s.unitSystem].join('|');
+
+let builtGrid = null;
+
+/**
+ * Work done by hand — moved joints, resized, deleted or copied members — is
+ * pinned to tags and coordinates that a new grid may not have. Rather than
+ * quietly dragging it onto a building it was not drawn for, the grid change is
+ * the moment to ask.
+ */
+async function confirmGridChange() {
+  const signature = gridSignature(state);
+  if (builtGrid === null || signature === builtGrid) return true;
+
+  const counts = manualEdits();
+  const total = counts.moves + counts.edits + counts.deleted + counts.added;
+  if (!total) return true;
+
+  const parts = [];
+  if (counts.moves) parts.push(`${counts.moves} moved joint${counts.moves > 1 ? 's' : ''}`);
+  if (counts.edits) parts.push(`${counts.edits} resized member${counts.edits > 1 ? 's' : ''}`);
+  if (counts.deleted) parts.push(`${counts.deleted} deleted member${counts.deleted > 1 ? 's' : ''}`);
+  if (counts.added) parts.push(`${counts.added} copied member${counts.added > 1 ? 's' : ''}`);
+
+  const keep = await confirmDialog({
+    title: 'The grid has changed',
+    message: `You have ${parts.join(', ')} on the old grid. They were placed against bays and `
+      + 'stories that are about to move, so keeping them would put them somewhere you did not '
+      + 'choose. Clear them and rebuild from the parameters alone?',
+    confirmLabel: 'Clear them',
+  });
+
+  if (keep) {
+    clearManualEdits();
+    toast('Hand edits cleared', 'The model is back to the parameters on the left — Ctrl+Z '
+      + 'brings the edits back.', 'info', 6000);
+  }
+  return true;
+}
+
+async function compile() {
+  await confirmGridChange();
+
   // Invalid input never reaches the builder: the sidebar already marks each
   // offending field, and nothing is substituted on the user's behalf.
   const check = validateState(state);
@@ -424,6 +592,7 @@ function compile() {
   }
 
   model = next;
+  builtGrid = gridSignature(state);
   dom.sceneEmpty.classList.add('is-hidden');
 
   viewer.setModel(model);
@@ -433,8 +602,7 @@ function compile() {
   refreshPanels();
 
   const s = model.stats;
-  el('legend-iso').hidden = !s.isolators;
-  el('legend-damp').hidden = !s.dampers;
+  paintLegend(s);
   dom.formSummary.textContent =
     `${model.grid.nz} stories · ${model.grid.nx}×${model.grid.ny} bays · ${s.dof} DOF`;
 
@@ -467,6 +635,22 @@ function reportBuild(warnings) {
   toast(plural(warnings.length, 'warning'), warnings[0].text, 'warn', 6500);
 }
 
+/** A legend entry for every kind of member the model actually contains. */
+function paintLegend(stats) {
+  const present = {
+    'legend-col': stats.columns,
+    'legend-beam': stats.beamsX + stats.beamsY,
+    'legend-iso': stats.isolators,
+    'legend-damp': stats.dampers,
+  };
+  let any = false;
+  for (const [id, count] of Object.entries(present)) {
+    el(id).hidden = !count;
+    if (count) any = true;
+  }
+  el('scene-legend').hidden = !any;
+}
+
 /** Opens Model Data at the warnings block. */
 function showWarnings() {
   tabs.select('data');
@@ -488,7 +672,7 @@ function refreshPanels() {
 }
 
 function markStale() {
-  if (model) setStatus('Modified — press Build model', 'stale');
+  if (model) setStatus('Build model', 'stale');
 }
 
 /** Mirrors the viewer's selection into the toolbar counter and the inspector. */
@@ -554,44 +738,84 @@ function recompileKeepingJoints(tags) {
 
 /* ──────────────────────────── view controls ─────────────────────────── */
 
-function onTabChange(id) {
-  const sceneTab = ['view3d', 'plan', 'elevation'].includes(id);
-  if (!sceneTab) return;
-  dom.storyPicker.hidden = id !== 'plan';
-  dom.framePicker.hidden = id !== 'elevation';
-  viewer.setOptions({ view: id });
-}
+function onTabChange() { /* the scene keeps whatever view the pickers set */ }
 
+/* Story and elevation are alternatives: choosing one clears the other, and
+   clearing both returns the scene to the full 3D model. */
+dom.selStory.addEventListener('change', () => {
+  if (dom.selStory.value === 'all') {
+    // "All stories" means the whole model, so an elevation cannot still be on.
+    dom.selFrame.value = 'none';
+    viewer.setOptions({ view: 'view3d' });
+  } else {
+    dom.selFrame.value = 'none';
+    viewer.setOptions({ view: 'plan', story: Number(dom.selStory.value) });
+  }
+  tabs.select('view3d');
+});
+
+dom.selFrame.addEventListener('change', () => {
+  if (dom.selFrame.value === 'none') {
+    dom.selStory.value = 'all';
+    viewer.setOptions({ view: 'view3d' });
+  } else {
+    dom.selStory.value = 'all';
+    const [axis, index] = dom.selFrame.value.split(':');
+    viewer.setOptions({ view: 'elevation', frame: { axis, index: Number(index) } });
+  }
+  tabs.select('view3d');
+});
+
+/**
+ * Refills the story and elevation pickers after a rebuild, keeping whatever the
+ * user was looking at. A model with one more story is still the same building;
+ * throwing the view back to the roof every time would make it tiresome to work
+ * on one floor.
+ */
 function populatePickers() {
   const { nx, ny, nz, xs, ys } = model.grid;
+  const wantedStory = dom.selStory.value || 'all';
+  const wantedFrame = dom.selFrame.value || 'none';
 
-  const story = Number(dom.selStory.value) || nz;
   dom.selStory.textContent = '';
+  dom.selStory.append(option('all', 'All stories — 3D'));
   for (let level = nz; level >= 1; level--) {
-    const o = document.createElement('option');
-    o.value = String(level);
-    o.textContent = level === nz ? `Roof — level ${level}` : `Level ${level}`;
-    dom.selStory.append(o);
+    dom.selStory.append(option(String(level),
+      level === nz ? `Roof — level ${level}` : `Level ${level}`));
   }
-  dom.selStory.value = String(Math.min(story, nz));
 
   dom.selFrame.textContent = '';
+  dom.selFrame.append(option('none', 'None — 3D'));
   for (let j = 0; j <= ny; j++) {
-    const o = document.createElement('option');
-    o.value = `x:${j}`;
-    o.textContent = `X–Z frame at Y = ${fmt(ys[j], 2)}`;
-    dom.selFrame.append(o);
+    dom.selFrame.append(option(`x:${j}`, `X–Z frame at Y = ${fmt(ys[j], 2)}`));
   }
   for (let i = 0; i <= nx; i++) {
-    const o = document.createElement('option');
-    o.value = `y:${i}`;
-    o.textContent = `Y–Z frame at X = ${fmt(xs[i], 2)}`;
-    dom.selFrame.append(o);
+    dom.selFrame.append(option(`y:${i}`, `Y–Z frame at X = ${fmt(xs[i], 2)}`));
   }
-  dom.selFrame.value = 'x:0';
 
-  viewer.setOptions({ story: Number(dom.selStory.value), frame: { axis: 'x', index: 0 } });
+  // A selection that no longer exists — the story it named has been removed —
+  // falls back to the 3D view rather than silently showing a different floor.
+  dom.selStory.value = has(dom.selStory, wantedStory) ? wantedStory : 'all';
+  dom.selFrame.value = has(dom.selFrame, wantedFrame) ? wantedFrame : 'none';
+
+  if (dom.selStory.value !== 'all') {
+    viewer.setOptions({ view: 'plan', story: Number(dom.selStory.value) });
+  } else if (dom.selFrame.value !== 'none') {
+    const [axis, index] = dom.selFrame.value.split(':');
+    viewer.setOptions({ view: 'elevation', frame: { axis, index: Number(index) } });
+  } else {
+    viewer.setOptions({ view: 'view3d' });
+  }
 }
+
+const option = (value, label) => {
+  const o = document.createElement('option');
+  o.value = value;
+  o.textContent = label;
+  return o;
+};
+
+const has = (select, value) => [...select.options].some((o) => o.value === value);
 
 /* ──────────────────────────── script output ─────────────────────────── */
 
@@ -665,3 +889,8 @@ function highlightPython(code) {
     return m;
   });
 }
+
+/* ─────────────────────────── first build ────────────────────────────── */
+
+loadViewOptions();
+compile();

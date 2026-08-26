@@ -35,6 +35,7 @@ export function renderResults(root, results, handlers) {
   if (!results) return;
 
   summary(root, results);
+  overlayCard(root, results, handlers);
   modal(root, results);
   storySection(root, results);
   capacity(root, results);
@@ -64,10 +65,20 @@ function dropZone(results, handlers) {
       + `${m.unitSystem || ''} · written by version ${m.version || '?'}`;
     body.append(title, detail);
 
+    // A run that stopped part way still writes everything it had, so the files
+    // look complete. The manifest is the only thing that knows they are not.
+    if (m.completed === false) {
+      const stopped = document.createElement('span');
+      stopped.className = 'res-missing';
+      stopped.textContent = 'This run did not finish — the script stopped before the end. '
+        + 'Everything below is what it had reached by then.';
+      body.append(stopped);
+    }
+
     if (results.missing.length) {
       const missing = document.createElement('span');
       missing.className = 'res-missing';
-      missing.textContent = `Not found: ${results.missing.join(', ')}`;
+      missing.textContent = `Not found or empty: ${results.missing.join(', ')}`;
       body.append(missing);
     }
   } else {
@@ -178,6 +189,134 @@ function summary(root, results) {
     row.append(box);
   }
   root.append(row);
+}
+
+/* ───────────────────────── what the 3D view shows ───────────────────── */
+
+const DIAGRAMS = [
+  ['', 'None'],
+  ['N', 'N — axial force'],
+  ['Vy', 'Vy — shear'],
+  ['Vz', 'Vz — shear'],
+  ['My', 'My — moment'],
+  ['Mz', 'Mz — moment'],
+  ['T', 'T — torsion'],
+];
+
+/**
+ * The controls for the deformed shape, the mode shapes and the force diagrams.
+ * They belong with the results rather than in the model toolbar: without an
+ * analysis loaded there is nothing for them to draw.
+ */
+function overlayCard(root, results, handlers) {
+  const overlay = handlers.overlay || {};
+  const change = (patch) => handlers.onOverlay(patch);
+
+  const modes = results.modeShapes ? [...results.modeShapes.keys()].sort((a, b) => a - b) : [];
+  const hasDisp = results.has('node_disp.out');
+  const hasForces = results.has('element_local_envelope.out');
+  if (!hasDisp && !modes.length && !hasForces) return;
+
+  root.append(heading('View in the 3D model'));
+
+  const card = document.createElement('div');
+  card.className = 'card overlay-card';
+
+  const row = document.createElement('div');
+  row.className = 'overlay-row';
+
+  /* what to draw the model as */
+  const shapes = [['none', 'Undeformed']];
+  if (hasDisp) shapes.push(['displaced', 'Deformed shape']);
+  if (modes.length) shapes.push(['mode', 'Mode shape']);
+
+  const shape = select(shapes, overlay.deform || 'none');
+  row.append(field('Shape', shape));
+
+  const periods = (results.cases.modal && results.cases.modal.periods) || [];
+  const mode = select(
+    modes.map((n) => [String(n), periods[n - 1] ? `Mode ${n} — ${fmt(periods[n - 1], 4)} s` : `Mode ${n}`]),
+    String(overlay.modeNumber || 1)
+  );
+  const modeField = field('Mode', mode);
+  row.append(modeField);
+
+  const scale = document.createElement('input');
+  scale.type = 'range';
+  scale.className = 'mini-range';
+  scale.min = '0.25';
+  scale.max = '8';
+  scale.step = '0.25';
+  scale.value = String(overlay.deformScale || 1);
+  const scaleField = field('Scale', scale);
+  row.append(scaleField);
+
+  const animate = document.createElement('input');
+  animate.type = 'checkbox';
+  animate.checked = !!overlay.animate;
+  const animateLabel = document.createElement('label');
+  animateLabel.className = 'toolbar-check';
+  const animateText = document.createElement('span');
+  animateText.textContent = 'Animate';
+  animateLabel.append(animate, animateText);
+  const animateField = field('', animateLabel);
+  row.append(animateField);
+
+  const diagram = select(hasForces ? DIAGRAMS : [['', 'None']], overlay.diagram || '');
+  const diagramField = field('Diagram', diagram);
+  row.append(diagramField);
+
+  const paint = () => {
+    const isMode = shape.value === 'mode';
+    modeField.hidden = !isMode;
+    animateField.hidden = !isMode;
+    scaleField.hidden = shape.value === 'none';
+    diagramField.hidden = !hasForces;
+  };
+
+  shape.addEventListener('change', () => { paint(); change({ deform: shape.value }); });
+  mode.addEventListener('change', () => change({ modeNumber: Number(mode.value) }));
+  scale.addEventListener('input', () => change({ deformScale: Number(scale.value) }));
+  animate.addEventListener('change', () => change({ animate: animate.checked }));
+  diagram.addEventListener('change', () => change({ diagram: diagram.value || null }));
+  paint();
+
+  card.append(row);
+
+  const note = document.createElement('p');
+  note.className = 'tbl-note';
+  note.textContent = 'Diagrams are drawn from the member force envelope, so each one shows the '
+    + 'largest value that member reached — which is what it is checked against. Changing any of '
+    + 'these switches to the 3D Model tab.';
+  card.append(note);
+
+  root.append(card);
+}
+
+function field(label, control) {
+  const wrap = document.createElement('div');
+  wrap.className = 'overlay-field';
+  if (label) {
+    const name = document.createElement('span');
+    name.textContent = label;
+    wrap.append(name);
+  }
+  wrap.append(control);
+  return wrap;
+}
+
+function select(options, value) {
+  const el = document.createElement('select');
+  el.className = 'mini-select';
+  for (const [v, label] of options) {
+    const o = document.createElement('option');
+    o.value = v;
+    o.textContent = label;
+    el.append(o);
+  }
+  el.value = value;
+  if (!el.value && options.length) el.value = options[0][0];
+  return el;
 }
 
 /* ──────────────────────────────── modal ─────────────────────────────── */

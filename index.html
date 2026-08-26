@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -38,7 +38,7 @@
     </svg>
     <div class="brand-text">
       <span class="brand-title">OpenSees Model Studio</span>
-      <span class="brand-sub">OpenSeesPy model builder &amp; viewer</span>
+      <span class="brand-sub">OpenSees model builder &amp; viewer</span>
     </div>
   </div>
 
@@ -47,8 +47,6 @@
   </div>
 
   <div class="topbar-actions">
-    <span class="credit">Developed by <b>Ahmet Şimşek</b></span>
-
     <div class="seg history-seg" role="group" aria-label="History">
       <button class="seg-btn seg-icon" id="btn-undo" title="Undo (Ctrl+Z)" aria-label="Undo" disabled>
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7L4 12l5 5"/><path d="M4 12h9a6 6 0 0 1 0 12h-2"/></svg>
@@ -59,7 +57,7 @@
     </div>
 
     <button class="btn btn-ghost wide-only" id="btn-reset" title="Restore all inputs to defaults">Reset</button>
-    <button class="btn btn-ghost wide-only" id="btn-download" title="Download the generated OpenSeesPy script">Download .py</button>
+    <button class="btn btn-ghost wide-only" id="btn-download" title="Download the generated OpenSeesPy script">Download Python File</button>
 
     <div class="menu-wrap">
       <button class="btn btn-icon" id="btn-more" aria-expanded="false" title="More actions" aria-label="More actions">
@@ -69,10 +67,13 @@
         <p class="menu-head">Project</p>
         <button class="menu-action" id="mi-export">Export project (.json)</button>
         <button class="menu-action" id="mi-import">Import project…</button>
+        <button class="menu-action" id="mi-load">Load model file…</button>
         <div class="menu-sep"></div>
         <p class="menu-head">Script</p>
-        <button class="menu-action" id="mi-download">Download .py</button>
+        <button class="menu-action" id="mi-download">Download Python File</button>
         <button class="menu-action" id="mi-notebook">Download .ipynb</button>
+        <div class="menu-sep"></div>
+        <button class="menu-action" id="mi-shortcuts">Keyboard shortcuts</button>
         <div class="menu-sep"></div>
         <button class="menu-action is-danger" id="mi-reset">Reset all inputs…</button>
       </div>
@@ -90,6 +91,8 @@
   </div>
 
   <input type="file" id="import-file" accept=".json,application/json" class="file-input" />
+  <input type="file" id="load-file" class="file-input"
+         accept=".py,.ipynb,.json,text/x-python,application/json" />
   <input type="file" id="results-file" class="file-input" multiple
          accept=".out,.txt,.json,application/json,text/plain" />
 </header>
@@ -112,10 +115,11 @@
       <div class="foot-summary" id="form-summary">—</div>
       <p class="foot-warning">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l9.5 16.5h-19L12 3z"/><path d="M12 10v4.2M12 16.6v.2"/></svg>
-        <span><b>Warning:</b> Engineering results must be reviewed and approved by the responsible structural engineer.</span>
+        <span><b>Warning:</b> Model content must be reviewed and approved by the responsible engineer.</span>
       </p>
       <div class="foot-meta">
-        <span id="foot-version"></span>
+        <span class="foot-credit">Developed by <b>Ahmet Şimşek</b> &middot; <span id="foot-version"></span></span>
+        <span class="foot-rights">&copy; 2026 Ahmet Şimşek. All rights reserved.</span>
         <span class="foot-storage" id="foot-storage" hidden>Not saved locally</span>
       </div>
     </div>
@@ -126,8 +130,6 @@
 
     <nav class="tabs" role="tablist">
       <button class="tab is-active" role="tab" data-tab="view3d">3D Model</button>
-      <button class="tab" role="tab" data-tab="plan">Plan</button>
-      <button class="tab" role="tab" data-tab="elevation">Elevation</button>
       <button class="tab" role="tab" data-tab="sections">Sections</button>
       <button class="tab" role="tab" data-tab="data">Model Data</button>
       <button class="tab" role="tab" data-tab="code">Python Code</button>
@@ -162,47 +164,21 @@
             <label class="menu-item"><input type="checkbox" id="tg-grid" checked><span>Grid</span></label>
             <label class="menu-item"><input type="checkbox" id="tg-supports" checked><span>Supports</span></label>
             <label class="menu-item"><input type="checkbox" id="tg-axes" checked><span>Global axes</span></label>
+            <div class="menu-sep"></div>
+            <button class="menu-action" id="mi-fit">Fit view to model <kbd>F</kbd></button>
           </div>
         </div>
 
-        <div class="toolbar-group" id="story-picker" hidden>
+        <!-- Picking a story shows its plan; picking a frame line shows that
+             elevation. They are alternatives, so choosing one clears the other. -->
+        <div class="toolbar-group" id="story-picker">
           <label for="sel-story">Story</label>
           <select id="sel-story" class="mini-select"></select>
         </div>
 
-        <div class="toolbar-group" id="frame-picker" hidden>
-          <label for="sel-frame">Frame</label>
+        <div class="toolbar-group" id="frame-picker">
+          <label for="sel-frame">Elevation</label>
           <select id="sel-frame" class="mini-select"></select>
-        </div>
-
-        <!-- Result overlays. Hidden until an analysis has been loaded. -->
-        <div class="toolbar-group res-group" id="deform-group" hidden>
-          <label for="sel-deform">Show</label>
-          <select id="sel-deform" class="mini-select">
-            <option value="none">Undeformed</option>
-            <option value="displaced">Deformed shape</option>
-            <option value="mode">Mode shape</option>
-          </select>
-          <select id="sel-mode" class="mini-select" hidden></select>
-          <label for="rng-deform-scale" id="lbl-deform-scale" hidden>Scale</label>
-          <input type="range" id="rng-deform-scale" class="mini-range" hidden
-                 min="0.25" max="8" step="0.25" value="1" />
-          <label class="toolbar-check" id="lbl-animate" hidden>
-            <input type="checkbox" id="tg-animate" /><span>Animate</span>
-          </label>
-        </div>
-
-        <div class="toolbar-group res-group" id="diagram-group" hidden>
-          <label for="sel-diagram">Diagram</label>
-          <select id="sel-diagram" class="mini-select">
-            <option value="">None</option>
-            <option value="N">N — axial</option>
-            <option value="Vy">Vy — shear</option>
-            <option value="Vz">Vz — shear</option>
-            <option value="My">My — moment</option>
-            <option value="Mz">Mz — moment</option>
-            <option value="T">T — torsion</option>
-          </select>
         </div>
 
         <div class="toolbar-spacer"></div>
@@ -219,9 +195,10 @@
             <p>Set your parameters on the left, then press <kbd>Build model</kbd>.</p>
           </div>
         </div>
-        <div class="scene-legend" id="scene-legend">
-          <span><i class="sw sw-col"></i>Column</span>
-          <span><i class="sw sw-beam"></i>Beam</span>
+        <!-- Only what the model actually contains; filled in by main.js. -->
+        <div class="scene-legend" id="scene-legend" hidden>
+          <span id="legend-col" hidden><i class="sw sw-col"></i>Column</span>
+          <span id="legend-beam" hidden><i class="sw sw-beam"></i>Beam</span>
           <span id="legend-iso" hidden><i class="sw sw-iso"></i>Isolator</span>
           <span id="legend-damp" hidden><i class="sw sw-damp"></i>Damper</span>
         </div>
@@ -252,7 +229,7 @@
         <div class="code-actions">
           <button class="btn btn-ghost btn-sm" id="btn-copy">Copy</button>
           <button class="btn btn-ghost btn-sm" id="btn-download-gm" hidden>Download record .txt</button>
-          <button class="btn btn-ghost btn-sm" id="btn-download-2">Download .py</button>
+          <button class="btn btn-ghost btn-sm" id="btn-download-2">Download Python File</button>
           <button class="btn btn-ghost btn-sm" id="btn-download-nb">Download .ipynb</button>
         </div>
       </div>

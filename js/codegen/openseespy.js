@@ -7,7 +7,7 @@
  */
 
 import { unitsOf } from '../units.js';
-import { APP_VERSION, PYTHON_SUPPORT } from '../version.js';
+import { APP_VERSION, PROJECT_FORMAT, PYTHON_SUPPORT } from '../version.js';
 import {
   CONCRETE_MODELS, STEEL_MODELS, materialArgs, constName, matKey,
 } from '../model/materials.js';
@@ -95,7 +95,7 @@ export function generateScript(s, model, gm = null) {
     '',
     'import math',
     'import os',
-    ...(s.useRecorders ? ['import json'] : []),
+    ...(s.useRecorders ? ['import atexit', 'import json'] : []),
     '',
     ...(pySparse ? [
       'import numpy as np',
@@ -393,7 +393,23 @@ export function generateScript(s, model, gm = null) {
       ''
     );
   }
-  const skip = (tagExpr) => (edited.tags.length ? [`            if ${tagExpr} in EDITED:`, '                continue'] : []);
+  const deletedTags = Object.keys(s.deletedElements || {}).map(Number).filter(Number.isFinite);
+  const anySkipped = edited.tags.length || deletedTags.length;
+  const skip = (tagExpr, indent = '            ') => (anySkipped
+    ? [`${indent}if ${tagExpr} in SKIPPED:`, `${indent}    continue`]
+    : []);
+
+  if (deletedTags.length) {
+    w(
+      '# Members deleted in the studio. The grid still numbers around them, so',
+      '# every other tag is exactly where it was.',
+      `DELETED = {${deletedTags.join(', ')}}`,
+      ''
+    );
+  }
+  if (anySkipped) {
+    w(`SKIPPED = ${edited.tags.length ? 'EDITED' : 'set()'}${deletedTags.length ? ' | DELETED' : ''}`, '');
+  }
 
   w(
     '# Columns',
@@ -417,6 +433,7 @@ export function generateScript(s, model, gm = null) {
       'for level in range(1, N_Z + 1):',
       '    for j in range(NY_N):',
       '        for i in range(N_X):',
+      ...skip('beam_x_tag(level, i, j)'),
       '            if (level, i, j) in CHEVRON_X:',
       '                mid = mid_x_tag(level, i, j)',
       '                a, b = ops.nodeCoord(node_tag(level, i, j)), ops.nodeCoord(node_tag(level, i + 1, j))',
@@ -432,6 +449,7 @@ export function generateScript(s, model, gm = null) {
       'for level in range(1, N_Z + 1):',
       '    for j in range(N_Y):',
       '        for i in range(NX_N):',
+      ...skip('beam_y_tag(level, i, j)'),
       '            if (level, i, j) in CHEVRON_Y:',
       '                mid = mid_y_tag(level, i, j)',
       '                a, b = ops.nodeCoord(node_tag(level, i, j)), ops.nodeCoord(node_tag(level, i, j + 1))',
@@ -477,6 +495,8 @@ export function generateScript(s, model, gm = null) {
     w('');
   }
 
+  emitCopiedMembers(w, s, model, shared);
+
   if (isolated || s.useDampers) emitDevices(w, s, model, u, isolated);
 
   /* ──────────────────────────────── loads ──────────────────────────── */
@@ -501,6 +521,10 @@ export function generateScript(s, model, gm = null) {
     '',
     '',
     'def add_load(tag, w):',
+    ...(deletedTags.length ? [
+      '    if tag in DELETED:',
+      '        return',
+    ] : []),
     '    beam_load[tag] = beam_load.get(tag, 0.0) + w',
     '',
     '',
@@ -534,13 +558,16 @@ export function generateScript(s, model, gm = null) {
       'for story in range(N_Z):',
       '    for j in range(NY_N):',
       '        for i in range(NX_N):',
+      ...(deletedTags.length ? ['            if col_tag(story, i, j) in DELETED:', '                continue'] : []),
       "            ops.eleLoad('-ele', col_tag(story, i, j), '-type', '-beamUniform', 0.0, 0.0, -W_COL)",
       'for level in range(1, N_Z + 1):',
       '    for j in range(NY_N):',
       '        for i in range(N_X):',
+      ...(deletedTags.length ? ['            if beam_x_tag(level, i, j) in DELETED:', '                continue'] : []),
       "            ops.eleLoad('-ele', beam_x_tag(level, i, j), '-type', '-beamUniform', -W_BX, 0.0)",
       '    for j in range(N_Y):',
       '        for i in range(NX_N):',
+      ...(deletedTags.length ? ['            if beam_y_tag(level, i, j) in DELETED:', '                continue'] : []),
       "            ops.eleLoad('-ele', beam_y_tag(level, i, j), '-type', '-beamUniform', -W_BY, 0.0)",
       ''
     );
@@ -586,17 +613,18 @@ export function generateScript(s, model, gm = null) {
 
   if (s.useRecorders) {
     w(
-      '# The recorders are flushed by wipe(); the manifest is written first so',
-      '# the directory is never a set of files nothing can interpret.',
-      'write_manifest()',
+      "RESULTS['completed'] = True",
+      'finish()',
+      ''
+    );
+  } else {
+    w(
+      'ops.wipe()',
       ''
     );
   }
 
-  w(
-    'ops.wipe()',
-    ''
-  );
+  emitProjectFooter(w, s);
 
   return alignComments(L).join('\n');
 }
@@ -793,6 +821,75 @@ const chunk = (arr, n) => Array.from({ length: Math.ceil(arr.length / n) }, (_, 
 
 /* ═══════════════════════════════ analyses ═══════════════════════════ */
 
+/** Marks the comment lines that carry the project back into the studio. */
+export const PROJECT_MARKER = '# osms:';
+
+/**
+ * Writes the model definition into the script as comments.
+ *
+ * A generated script says everything about the model except how it was set up:
+ * bay widths survive as numbers, but which material model produced them does
+ * not. Carrying the definition along means the file the user keeps is the file
+ * they can reopen — no second export to lose track of.
+ */
+function emitProjectFooter(w, s) {
+  const payload = JSON.stringify({
+    app: 'OpenSees Model Studio',
+    version: APP_VERSION,
+    format: PROJECT_FORMAT,
+    state: s,
+  });
+
+  w(
+    `# ${'═'.repeat(72)}`,
+    '#  Model definition',
+    '#',
+    '#  Written by OpenSees Model Studio so this file can be opened straight',
+    "#  back into it with 'Load model file'. It is data, not code — editing the",
+    '#  script above will not change what is loaded.',
+    `# ${'═'.repeat(72)}`,
+    // Wrapped so no line runs away, and each one marked so the reader can find
+    // them however the file has been reformatted.
+    ...chunkString(payload, 96).map((line) => `${PROJECT_MARKER} ${line}`),
+    ''
+  );
+}
+
+/** Splits a string into fixed-width pieces. */
+function chunkString(text, size) {
+  const out = [];
+  for (let i = 0; i < text.length; i += size) out.push(text.slice(i, i + size));
+  return out;
+}
+
+/**
+ * Members the user copied off the grid. They have no grid index, so they are
+ * written out literally: their joints first — reusing one that already exists
+ * where the ends coincide — and then the members themselves.
+ */
+function emitCopiedMembers(w, s, model, shared) {
+  const added = model.elements.filter((e) => e.added);
+  if (!added.length) return;
+
+  const newNodes = model.nodes.filter((n) => n.added);
+  w('# Members copied off the grid in the studio. They carry no slab load or',
+    '# tributary mass — they are members only.');
+
+  for (const n of newNodes) {
+    w(`ops.node(${pi(n.tag)}, ${pf(n.x)}, ${pf(n.y)}, ${pf(n.z)})`);
+  }
+  if (newNodes.length) w('');
+
+  for (const e of added) {
+    const prefix = e.kind === 'column' ? 'COL' : (e.kind === 'beamY' && !shared ? 'BY' : 'BX');
+    const integration = e.kind === 'column' ? T.intCol
+      : e.kind === 'beamY' ? T.intBeamY : T.intBeamX;
+    w('ops.element(' + elementArgs(s, e.kind, String(e.tag), String(e.ni), String(e.nj),
+      prefix, transfOf(e.kind), integration) + ')');
+  }
+  w('');
+}
+
 /* ═══════════════════════ recorders and manifest ═════════════════════ */
 
 /**
@@ -872,6 +969,9 @@ function emitResultManifest(w, s, model, u, isolated) {
     '    \'supports\': list(support_nodes),',
     '    \'files\': {},',
     '    \'cases\': {},',
+    '    # Flipped by the last line of the script. A manifest that still says',
+    '    # False was written by atexit after the run gave up part way.',
+    '    \'completed\': False,',
     '}',
     '',
     'for tag in all_nodes:',
@@ -996,6 +1096,29 @@ function emitResultManifest(w, s, model, u, isolated) {
     "    with open(out_path('manifest.json'), 'w') as handle:",
     '        json.dump(RESULTS, handle, indent=1)',
     "    print(f'Wrote {out_path(\"manifest.json\")}')",
+    '',
+    '',
+    '_FINISHED = []',
+    '',
+    '',
+    'def finish():',
+    '    """Closes the run: writes the manifest and flushes the recorders.',
+    '',
+    '    OpenSees only writes its recorder files when the domain is wiped, so an',
+    '    analysis that raises part way would otherwise leave a directory of empty',
+    '    files behind. Registered with atexit as well as called at the end, so it',
+    '    runs whether the script finished or gave up.',
+    '    """',
+    '    if _FINISHED:',
+    '        return',
+    '    _FINISHED.append(True)',
+    '    try:',
+    '        write_manifest()',
+    '    finally:',
+    '        ops.wipe()',
+    '',
+    '',
+    'atexit.register(finish)',
     '',
     ''
   );

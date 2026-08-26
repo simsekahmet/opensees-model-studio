@@ -7,7 +7,7 @@ tables, and a runnable `.py` script — all from a static page.
 
 **Live app:** https://simsekahmet.github.io/opensees-model-studio/
 
-**Version 1.1.0** — see [CHANGELOG.md](CHANGELOG.md).
+**Version 1.2.0** — see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -15,9 +15,7 @@ tables, and a runnable `.py` script — all from a static page.
 
 | Panel | Contents |
 |---|---|
-| **3D Model** | Orbitable model in stick or extruded mode, with node and element labels, supports, grid and dimension lines. Click any member to inspect it. |
-| **Plan** | Orthographic floor plan of any selected story. |
-| **Elevation** | Any X–Z or Y–Z frame line, in isolation. |
+| **3D Model** | Orbitable model in stick or extruded mode, with node and element labels, supports, grid and dimension lines. Choosing a story shows its plan, choosing a frame line shows that elevation. Click any member to inspect it. |
 | **Sections** | Scaled cross-section drawings with rebar layout, dimensions and section properties — including any section created by editing members, drawn the same way and listing the members that carry it. |
 | **Model Data** | Story, element and node tables — tags, coordinates, restraints, lengths, section sizes, line loads and masses. |
 | **Python Code** | The generated OpenSeesPy script, syntax highlighted, ready to copy or download as `.py` or as a `.ipynb` notebook with one code cell per section. |
@@ -36,11 +34,17 @@ selection.
 - **Joints** — the inspector gives X, Y and Z displacement fields. Everything
   attached follows the joint, because element ends are read from the node
   coordinates.
+- **Delete** removes the selected members. The grid still numbers around them,
+  so every other tag is exactly where it was.
+- **Ctrl + R** copies the selected members anywhere in three axes — a column to
+  the story above, a beam half a bay across. Copies are members only: they carry
+  no slab load and no tributary mass.
 
-Both kinds of edit sit on top of the parametric grid rather than replacing it:
-they survive a rebuild and later changes to bay widths or story heights, and
-`Use model values` / `Back to grid` removes them. Every edit is written into the
-generated script on the next **Build model**.
+Press <kbd>?</kbd> for the full list of keys.
+
+Every kind of edit sits on top of the parametric grid rather than replacing it:
+it survives a rebuild, and `Use model values` / `Back to grid` removes it. All of
+it is written into the generated script on the next **Build model**.
 
 ## Input, history and project files
 
@@ -54,8 +58,17 @@ Undo and redo sit in the top bar and answer to <kbd>Ctrl</kbd>+<kbd>Z</kbd> and
 <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd>. They cover form edits, joint moves,
 member edits and Reset, which asks for confirmation first.
 
-`Export project (.json)` writes every input, joint move and member edit to one
-file; `Import project…` reads it back, filling in anything a newer release added.
+Changing the bays or the stories asks before it clears work done by hand: moved
+joints and resized, deleted or copied members were placed against a grid that is
+about to move, and dragging them onto a different building is not a decision the
+app should make quietly.
+
+Every generated script and notebook carries its own model definition in a
+comment block at the end, so **the file you keep to run is the file you can
+reopen**. `Load model file…` takes a `.py`, an `.ipynb` or a `.json` project and
+puts the sections, materials and analysis settings back in the panel on the
+left. `Export project (.json)` writes the same thing on its own.
+
 The app also keeps its state in the browser's local storage — and tells you when
 it cannot, rather than losing the model when the tab closes.
 
@@ -151,6 +164,7 @@ js/
     charts.js        the SVG plotting the results are drawn with
 tests/
   generate.mjs       writes one script per variant, headlessly
+  roundtrip.mjs      a model must survive the trip out and back
   run_variants.py    runs them against real openseespy
   equilibrium.py     statics check on fixed and isolated bases
   results.py         end-to-end check of the result pipeline
@@ -191,7 +205,7 @@ beam Y  300000 + level · 1000 + index + 1
 The verification suite lives in [`tests/`](tests/) and you can run it yourself:
 
 ```bash
-node tests/generate.mjs && python tests/run_variants.py && python tests/equilibrium.py
+npm test
 ```
 
 `generate.mjs` imports the app's own builder and code generator — the same
@@ -202,8 +216,13 @@ solver option and analysis case is covered, along with moved joints and edited
 members. `run_variants.py` then runs each one against a real `openseespy`.
 
 The last run on Python 3.12: **95 completed, 4 did not converge, 0 script
-errors.** The four are highly nonlinear material laws under a full gravity step
-— valid scripts, difficult models.
+errors.** The four are `ConcreteD`, `ConfinedConcrete01`, `YamamotoBiaxialHDR`
+and `multipleShearSpring` — highly nonlinear laws under a full gravity step,
+valid scripts and difficult models.
+
+`roundtrip.mjs` sends a model with hand edits out through the script, the
+notebook and the project file and reads all three back, field by field: `Load
+model file` is only a promise if every format survives the trip.
 
 `equilibrium.py` closes statics end to end: the sum of the vertical base
 reactions the solver reports is compared against the gravity load the builder

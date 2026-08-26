@@ -57,6 +57,71 @@ const BASIS = {
 
 const ZERO = [0, 0, 0];
 
+/* ─────────────────────────── support symbols ─────────────────────────── */
+
+/** Reads the restraint pattern back into the name of the support. */
+function supportKind(fix) {
+  if (!fix) return null;
+  const held = fix.reduce((a, v) => a + (v ? 1 : 0), 0);
+  if (held === 6) return 'Fixed';
+  if (fix[0] && fix[1] && fix[2]) return 'Pinned';
+  if (fix[2]) return 'Roller';
+  return 'Pinned';
+}
+
+/** A cone standing on its apex under the joint — the pin of every drawing. */
+function supportCone(s) {
+  const geom = new THREE.ConeGeometry(s, s * 1.6, 4);
+  geom.rotateX(Math.PI / 2);            // point the cone up the Z axis
+  geom.translate(0, 0, -s * 0.8);       // apex at the joint, opening downwards
+  return geom;
+}
+
+/** The ground line the symbol stands on. */
+function groundBar(s, z, width = 2.6) {
+  const geom = new THREE.BoxGeometry(s * width, s * width, s * 0.22);
+  geom.translate(0, 0, z);
+  return geom;
+}
+
+/** Hatching under a fixed base, as four bars raked at 45°. */
+function hatching(s, z) {
+  const bars = [];
+  for (let i = -1; i <= 2; i++) {
+    const geom = new THREE.BoxGeometry(s * 0.14, s * 1.5, s * 0.14);
+    geom.rotateX(Math.PI / 4);
+    geom.translate(s * 0.62 * i - s * 0.31, 0, z);
+    bars.push(geom);
+  }
+  return bars;
+}
+
+/**
+ * The pieces each support symbol is built from, positioned relative to the
+ * joint. One instanced mesh is drawn per piece.
+ */
+const SUPPORT_PIECES = {
+  Fixed: (s) => [
+    // A plate flush under the joint, hatched beneath: nothing moves, nothing turns.
+    groundBar(s, -s * 0.16, 3.0),
+    ...hatching(s, -s * 0.75),
+  ],
+  Pinned: (s) => [supportCone(s), groundBar(s, -s * 1.78)],
+  Roller: (s) => [
+    supportCone(s),
+    rollerBall(s, -s * 1.05),
+    rollerBall(s, s * 1.05),
+    groundBar(s, -s * 2.35),
+  ],
+};
+
+/** One of the two rollers a roller support rides on. */
+function rollerBall(s, x) {
+  const geom = new THREE.SphereGeometry(s * 0.42, 12, 8);
+  geom.translate(x, 0, -s * 2.0);
+  return geom;
+}
+
 /** Drawing order; devices come last so they sit on top of the frame. */
 const KINDS = ['column', 'beamX', 'beamY', 'isolator', 'damper'];
 
@@ -176,14 +241,22 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
 
   /* ── public API ───────────────────────────────────────────────────── */
 
+  /**
+   * Hands the viewer a new model.
+   *
+   * The camera is only framed the first time. Rebuilding after a parameter
+   * change would otherwise throw away the zoom and angle the user had chosen,
+   * which is exactly the moment they most want to keep looking at the same
+   * corner of the building. `Fit view` re-frames on demand.
+   */
   function setModel(next) {
+    const first = !model;
     model = next;
     selection.clear();
     nodeSelection.clear();
     opts.story = Math.min(opts.story, model.grid.nz) || 1;
     rebuild();
-    applyCamera();
-    fit();
+    if (first) { applyCamera(); fit(); }
   }
 
   /**
@@ -460,22 +533,45 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
     if (animated) animated.nodeMesh = { mesh, nodes, matrix: new THREE.Matrix4() };
   }
 
+  /**
+   * Support symbols, drawn as the drawing convention draws them: a hatched
+   * plate for a fixed base, a cone on the ground for a pin, a cone on rollers
+   * for a roller. A free base has no symbol because there is nothing there.
+   */
   function buildSupports(scale) {
+    // The plan of an upper story has nothing to do with supports three stories
+    // below it, so they only appear on the level that actually carries them.
+    if (opts.view === 'plan' && opts.story !== 0) return;
+
     const base = model.nodes.filter((n) => n.level === 0 && n.fix);
     if (!base.length) return;
+
+    const byKind = new Map();
+    for (const n of base) {
+      const kind = supportKind(n.fix);
+      if (!kind) continue;
+      if (!byKind.has(kind)) byKind.set(kind, []);
+      byKind.get(kind).push(n);
+    }
+
     const s = scale * 0.018;
-    const geom = new THREE.ConeGeometry(s, s * 1.6, 4);
-    geom.rotateX(Math.PI / 2);          // point the cone up the Z axis
-    geom.translate(0, 0, -s * 0.8);
-    const mat = new THREE.MeshLambertMaterial({ color: new THREE.Color(themeColor('--el-support')) });
-    const mesh = new THREE.InstancedMesh(geom, mat, base.length);
+    const colour = new THREE.Color(themeColor('--el-support'));
     const m = new THREE.Matrix4();
-    base.forEach((n, i) => {
-      m.makeTranslation(n.x, n.y, n.z);
-      mesh.setMatrixAt(i, m);
-    });
-    mesh.instanceMatrix.needsUpdate = true;
-    gSupports.add(mesh);
+
+    for (const [kind, nodes] of byKind) {
+      for (const geom of SUPPORT_PIECES[kind](s)) {
+        const mesh = new THREE.InstancedMesh(
+          geom, new THREE.MeshLambertMaterial({ color: colour }), nodes.length
+        );
+        mesh.frustumCulled = false;
+        nodes.forEach((n, i) => {
+          m.makeTranslation(n.x, n.y, n.z);
+          mesh.setMatrixAt(i, m);
+        });
+        mesh.instanceMatrix.needsUpdate = true;
+        gSupports.add(mesh);
+      }
+    }
   }
 
   function buildGrid() {

@@ -966,3 +966,41 @@ table.tbl tbody tr:hover td { background: var(--bg-2); color: var(--text-1); }
   .history-seg .seg-btn { width: 27px; }
   .stat { flex: 1 1 100%; }
 }
+
+/* ─────────────────── result overlay controls & shortcuts ─────────────── */
+
+.overlay-card { padding: 12px 14px 10px; }
+.overlay-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 14px; }
+.overlay-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.overlay-field > span { font-size: 10.5px; color: var(--text-3); }
+
+.modal-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
+.modal-field { display: flex; flex-direction: column; gap: 4px; }
+.modal-field > span { font-size: 11px; color: var(--text-3); }
+
+.shortcut-list {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 7px 16px;
+  margin-top: 14px;
+  align-items: baseline;
+}
+.shortcut-list dt { display: flex; gap: 4px; white-space: nowrap; }
+.shortcut-list dd { margin: 0; font-size: 12px; color: var(--text-2); line-height: 1.4; }
+
+kbd {
+  display: inline-block;
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: var(--r-sm);
+  background: var(--bg-2);
+  color: var(--text-1);
+  font: 500 11px/1.6 var(--mono);
+}
+
+/* The credit and licence line under the sidebar warning. */
+.foot-meta { flex-direction: column; align-items: center; gap: 2px; text-align: center; }
+.foot-credit { font-family: var(--font); }
+.foot-credit b { color: var(--text-2); font-weight: 600; }
+.foot-rights { font-family: var(--font); font-size: 10px; color: var(--text-3); }

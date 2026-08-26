@@ -4,6 +4,71 @@ All notable changes to OpenSees Model Studio are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [semantic versioning](https://semver.org/).
 
+## [1.2.0] — 2026-08-26
+
+### Fixed
+
+- **`ElastomericX`, `LeadRubberX` and `HDR` were wrongly flagged as shear-only.**
+  They were reported as a blocking issue that would stop the analysis
+  converging. All three model their own axial response — cavitation and
+  buckling included — and all three converge in the verification suite. Only
+  `multipleShearSpring` and `YamamotoBiaxialHDR` genuinely carry shear alone,
+  and the warning now belongs to them.
+- **The default convergence tolerance was unusable in metres.** `NormDispIncr`
+  measures a displacement increment, so a tolerance of `1e-8` in kN·m is ten
+  nanometres — a bar a nonlinear section cannot clear, leaving the run to stall
+  at a norm near `1e-6` until it gave up. The default now follows the unit
+  system (`1e-6` in kN·m, `1e-3` in N·mm, `1e-5` in kip·in), and the field says
+  what it measures.
+- **A run that stopped part way left an unreadable output directory.** OpenSees
+  writes its recorder files when the domain is wiped, so an analysis that raised
+  first left them empty. The script now closes itself through `atexit`: the
+  manifest is written and the recorders flushed however the run ended, and the
+  manifest records whether it finished.
+- **"None of the result files were found" said nothing useful.** It now lists
+  what it looked for, and separates files that were never handed over from files
+  that were handed over empty — which are two different problems.
+- **The drawer handle and its close button appeared on the desktop.** They were
+  declared before `.btn`, which sets `display` at equal specificity and won on
+  source order.
+- **Plan views showed the supports of the base**, three stories below whatever
+  floor was being looked at.
+
+### Added
+
+- **Load model file.** Every generated script and notebook now carries its own
+  model definition in a comment block, so the file kept to run is the file that
+  can be reopened. `Load model file…` reads a `.py`, an `.ipynb` or a `.json`
+  project and puts the sections, materials and analysis settings back in the
+  panel on the left.
+- **Deleting and copying members.** `Delete` removes the selected members —
+  the grid numbers around them, so every other tag is unchanged — and
+  `Ctrl + R` copies them anywhere in three axes. Both are undoable and both are
+  written into the generated script.
+- **A keyboard shortcut list**, in the overflow menu and on `?`.
+- **Support symbols that mean something.** A hatched plate for a fixed base, a
+  cone on the ground for a pin, a cone on rollers for a roller.
+- **`Fit view to model`**, on `F` and in the view menu, now that rebuilding no
+  longer re-frames the camera by itself.
+
+### Changed
+
+- **The view is no longer thrown away on every build.** The camera keeps its
+  angle and zoom, the story and elevation pickers keep their selection, and the
+  overlay toggles are remembered across builds and across sessions.
+- **Plan and Elevation are no longer tabs.** They are the same scene seen
+  through a different camera, so choosing a story shows its plan and choosing a
+  frame line shows that elevation — and either picker set back to its 3D entry
+  returns the whole model.
+- **Work done by hand is no longer carried onto a grid it was not drawn for.**
+  Changing the bays or stories asks first, then clears the moved joints, resized,
+  deleted and copied members rather than dragging them somewhere nobody chose.
+- **The result overlays moved to the Results panel**, where the analysis they
+  draw actually is.
+- The legend lists only what the model contains. The page opens in light mode.
+  `Download .py` is `Download Python File`. The stale-build status reads
+  `Build model`. The credit and licence sit under the sidebar warning.
+
 ## [1.1.0] — 2026-08-25
 
 ### Added

@@ -10,3 +10,5 @@ Thumbs.db
 # Generated test scripts and their run reports
 tests/out/
 tests/sample/
+tests/edited/
+tests/failing/

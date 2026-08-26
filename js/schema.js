@@ -403,7 +403,15 @@ export const SCHEMA = [
         'NormUnbalance', 'NormDispIncr', 'EnergyIncr',
         'RelativeNormUnbalance', 'RelativeNormDispIncr', 'RelativeTotalNormDispIncr', 'RelativeEnergyIncr',
         'FixedNumIter', 'NormDispAndUnbalance', 'NormDispOrUnbalance') },
-      { id: 'tol', type: 'number', gt: 0, label: 'Tolerance', step: 1e-9, d: 1e-8, half: true },
+      // The convergence test measures a displacement increment, so the tolerance
+      // is a length and has to follow the unit system. A metre-based default of
+      // 1e-8 is ten nanometres — a bar a nonlinear section can never clear, and
+      // the run stalls at a norm of about 1e-6 until the iteration limit.
+      { id: 'tol', type: 'number', gt: 0, label: 'Tolerance', step: 1e-9, half: true,
+        d: { 'kN-m': 1e-6, 'N-mm': 1e-3, 'kip-in': 1e-5 },
+        hint: 'What the test above must reach. NormDispIncr and NormUnbalance measure a '
+            + 'displacement increment, so this is a length in the current unit system; '
+            + 'EnergyIncr measures work. Too tight and a nonlinear model never converges.' },
       { id: 'maxIter', type: 'number', label: 'Max iterations', d: 100, min: 1, max: 5000, step: 1, half: true },
       { id: 'algorithmCmd', type: 'select', label: 'algorithm', d: 'Newton', options: opts(
         'Linear', 'Newton', 'NewtonLineSearch', 'ModifiedNewton', 'KrylovNewton',

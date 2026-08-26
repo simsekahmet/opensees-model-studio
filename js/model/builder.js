@@ -32,6 +32,8 @@ const TAG_ISOLATOR = 400000;
 const TAG_DAMPER = 500000;
 const TAG_SPLIT_X = 600000;     // second half of a split X beam
 const TAG_SPLIT_Y = 700000;     // second half of a split Y beam
+const TAG_ADDED = 800000;       // member copied off the grid
+const TAG_ADDED_NODE = 90000;   // joint created for a copied member
 
 const FIXITY = {
   Fixed:  [1, 1, 1, 1, 1, 1],
@@ -355,6 +357,64 @@ export function buildModel(s) {
     }
   }
 
+  /* ── deleted and copied members ─────────────────────────────────────── */
+
+  // Deletions are applied by tag rather than by rebuilding the grid without
+  // them, so every other member keeps the tag it already had.
+  const deleted = s.deletedElements || {};
+  const deletedTags = [];
+  if (Object.keys(deleted).length) {
+    for (let n = elements.length - 1; n >= 0; n--) {
+      const e = elements[n];
+      if (!deleted[e.tag]) continue;
+      deletedTags.push(e.tag);
+      elements.splice(n, 1);
+      elementByTag.delete(e.tag);
+    }
+  }
+
+  // Copied members carry their own end coordinates. Where an end lands on a
+  // joint that already exists it reuses it; otherwise a new node is created, so
+  // a copy is connected to the frame rather than floating beside it.
+  const added = [];
+  const snapTolerance = Math.max(...spansX, ...spansY, ...heights) * 1e-6;
+  const nodeAt = (p) => {
+    for (const n of nodes) {
+      if (Math.abs(n.x - p[0]) < snapTolerance
+        && Math.abs(n.y - p[1]) < snapTolerance
+        && Math.abs(n.z - p[2]) < snapTolerance) return n;
+    }
+    return null;
+  };
+
+  for (const [index, spec] of (s.addedElements || []).entries()) {
+    const ends = [spec.from, spec.to].map((p) => {
+      const found = nodeAt(p);
+      if (found) return found;
+      const tag = TAG_ADDED_NODE + nodes.length + 1;
+      const created = {
+        tag, x: p[0], y: p[1], z: p[2],
+        i: -1, j: -1, level: -1, fix: null, mass: 0, added: true,
+      };
+      nodes.push(created);
+      nodeByTag.set(tag, created);
+      return created;
+    });
+
+    const base = spec.kind === 'column' ? sections.column
+      : spec.kind === 'beamY' ? sections.beamY : sections.beamX;
+    const tag = TAG_ADDED + index + 1;
+    const element = makeElement({
+      tag, kind: spec.kind, ni: ends[0].tag, nj: ends[1].tag,
+      nodeByTag, story: -1, i: -1, j: -1, section: sectionFor(tag, base),
+    });
+    element.added = true;
+    element.copyOf = spec.source;
+    elements.push(element);
+    elementByTag.set(tag, element);
+    added.push(element);
+  }
+
   /* ── rigid diaphragms ───────────────────────────────────────────────── */
   const diaphragms = [];
   if (s.rigidDiaphragm) {
@@ -423,6 +483,14 @@ export function buildModel(s) {
   if (s.matSystem === 'steel' && usesFibers(s)) {
     warn('Steel fiber sections use the steel material for the whole cross-section; concrete parameters are ignored.');
   }
+  if (deletedTags.length) {
+    warn(`${deletedTags.length} member${deletedTags.length > 1 ? 's have' : ' has'} been deleted. `
+      + 'The grid still numbers around them, so every other tag is unchanged.');
+  }
+  if (added.length) {
+    warn(`${added.length} member${added.length > 1 ? 's were' : ' was'} copied off the grid. `
+      + 'Copies carry no slab load or tributary mass — they are members only.');
+  }
   if (s.runTimeHistory && !getRecord()) {
     warn('Time history is on but no acceleration record is loaded. The script still expects the '
       + 'file beside it at run time and stops if it is missing.');
@@ -453,6 +521,8 @@ export function buildModel(s) {
       dampers: elements.filter((e) => e.kind === 'damper').length,
       movedNodes: movedTags.length,
       editedElements: editedTags.length,
+      deletedElements: deletedTags.length,
+      addedElements: added.length,
       dof: nodes.length * 6,
       floorArea,
       totalFloorArea: floorArea * nz,

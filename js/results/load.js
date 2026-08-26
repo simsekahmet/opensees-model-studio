@@ -46,7 +46,8 @@ export async function loadResults(fileList) {
   }
 
   const series = {};
-  const missing = [];
+  const missing = [];      // never handed over
+  const empty = [];        // handed over, but with nothing readable in them
 
   for (const [name, spec] of Object.entries(manifest.files)) {
     if (!isTable(name)) continue;
@@ -55,15 +56,29 @@ export async function loadResults(fileList) {
 
     const width = spec.columns.length;
     const rows = parseTable(await file.text(), width);
-    if (!rows.length) { missing.push(name); continue; }
+    if (!rows.length) { empty.push(name); continue; }
     series[name] = { ...spec, name, width, rows };
   }
 
+  // Saying "nothing was found" without saying what was looked for is no help at
+  // all, and the two ways this fails need different answers from the user.
   if (!Object.keys(series).length) {
-    throw new ResultError('The manifest was read, but none of the result files it lists were found.');
+    const listed = Object.keys(manifest.files).filter(isTable);
+    if (empty.length) {
+      throw new ResultError(
+        `${empty.length} of the ${listed.length} result files are empty: ${empty.join(', ')}. `
+        + 'OpenSees flushes its recorders when the script finishes, so this usually means the '
+        + 'analysis stopped part way — check the console output of the run.'
+      );
+    }
+    throw new ResultError(
+      `None of the ${listed.length} files the manifest lists were selected. It expects `
+      + `${listed.join(', ')} — drop the whole output folder, or select every file in it `
+      + '(Ctrl+A in the file dialog), not just manifest.json.'
+    );
   }
 
-  return index(manifest, series, missing);
+  return index(manifest, series, [...missing, ...empty]);
 }
 
 /** A dropped directory gives paths like `output/node_disp.out`. */
