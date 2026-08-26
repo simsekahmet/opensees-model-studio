@@ -586,6 +586,7 @@ html[data-theme="light"] .icon-moon { display: none; }
 .sw-beam { background: var(--el-beam); }
 .sw-iso  { background: var(--el-isolator); }
 .sw-damp { background: var(--el-damper); }
+.sw-slab { background: var(--el-slab); }
 
 /* ---------------------------- inspector -------------------------------- */
 

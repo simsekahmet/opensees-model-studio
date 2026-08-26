@@ -35,6 +35,7 @@ const TAG_SPLIT_X = 600000;     // second half of a split X beam
 const TAG_SPLIT_Y = 700000;     // second half of a split Y beam
 const TAG_ADDED = 800000;       // member copied off the grid
 const TAG_ADDED_NODE = 90000;   // joint created for a copied member
+const TAG_SLAB = 900000;        // one shell per bay panel
 
 const FIXITY = {
   Fixed:  [1, 1, 1, 1, 1, 1],
@@ -357,6 +358,43 @@ export function buildModel(s) {
     }
   }
 
+  /* ── floor slabs ────────────────────────────────────────────────────── */
+
+  // One shell per bay panel, on the four column nodes that bound it. Using the
+  // existing joints means the slab and the frame share their whole boundary —
+  // no new nodes, and nothing to tie together afterwards.
+  const slabs = [];
+  if (s.useSlabs) {
+    const thickness = numOr(s.slabThickness, 0);
+    const modulus = numOr(s.slabE, 0);
+    for (let level = 1; level <= nz; level++) {
+      for (let j = 0; j < ny; j++) {
+        for (let i = 0; i < nx; i++) {
+          const corners = [
+            nodeTag(level, i, j),
+            nodeTag(level, i + 1, j),
+            nodeTag(level, i + 1, j + 1),
+            nodeTag(level, i, j + 1),
+          ];
+          const points = corners.map((tag) => {
+            const n = nodeByTag.get(tag);
+            return [n.x, n.y, n.z];
+          });
+          slabs.push({
+            tag: TAG_SLAB + level * 1000 + j * nx + i + 1,
+            kind: 'slab',
+            level, i, j,
+            nodes: corners,
+            points,
+            thickness,
+            E: modulus,
+            area: spansX[i] * spansY[j],
+          });
+        }
+      }
+    }
+  }
+
   /* ── insertion points ───────────────────────────────────────────────── */
 
   // The offset is rigid: the joints stay where they are and the member is
@@ -503,6 +541,16 @@ export function buildModel(s) {
     warn(`${added.length} member${added.length > 1 ? 's were' : ' was'} copied off the grid. `
       + 'Copies carry no slab load or tributary mass — they are members only.');
   }
+  if (slabs.length) {
+    warn(`${slabs.length} floor panels are modelled as ${s.slabElement} shells. They add `
+      + 'in-plane and out-of-plane stiffness and will change the periods. The slab load still '
+      + 'reaches the beams by tributary area — the shells themselves are not loaded.');
+  }
+  if (slabs.length && s.rigidDiaphragm) {
+    warn('Rigid diaphragms and shell slabs are both on. Both tie the floor together in plane, '
+      + 'so the diaphragm constraint will dominate and the membrane stiffness of the slab '
+      + 'is spent.');
+  }
   if (insertedTags.length) {
     warn(`${insertedTags.length} member${insertedTags.length > 1 ? 's are' : ' is'} set on an `
       + 'insertion point other than the centroid. The offset is written as a rigid end offset, '
@@ -527,6 +575,7 @@ export function buildModel(s) {
     sections,
     nodes, nodeByTag,
     elements, elementByTag,
+    slabs,
     diaphragms,
     stats: {
       nodes: nodes.length,
@@ -541,6 +590,8 @@ export function buildModel(s) {
       deletedElements: deletedTags.length,
       addedElements: added.length,
       insertedElements: insertedTags.length,
+      slabs: slabs.length,
+      slabArea: slabs.reduce((a, p) => a + p.area, 0),
       dof: nodes.length * 6,
       floorArea,
       totalFloorArea: floorArea * nz,

@@ -277,7 +277,50 @@ export const SCHEMA = [
         hint: 'Creates a master node at each floor centroid and ties the slab nodes to it (perpDirn 3).' },
       { id: 'restrainDiaphragmDofs', type: 'check', d: true, showIf: (s) => s.rigidDiaphragm,
         label: 'Restrain out-of-plane DOFs of master nodes',
-        hint: 'Fixes UZ, RX and RY of every master node.' },
+        hint: 'rigidDiaphragm only ties UX, UY and RZ. Without this the master node keeps '
+            + 'three degrees of freedom that carry no stiffness and no mass, and the analysis '
+            + 'stops on a zero-energy mode. Leave it on unless you restrain them yourself.' },
+    ],
+  },
+
+  /* ═══════════════════════════════════════════════════════ Slabs ═══════ */
+  {
+    id: 'slabs', title: 'Floor Slabs',
+    fields: [
+      { id: 'useSlabs', type: 'check', d: false,
+        label: 'Model the floor slabs as shell elements',
+        hint: 'One shell per bay panel, spanning the four columns that bound it. The slab is '
+            + 'then part of the structure: it carries in-plane (diaphragm) stiffness and '
+            + 'out-of-plane stiffness, and both change the periods.' },
+      { id: 'slabElement', type: 'select', label: 'Shell element', d: 'ShellMITC4',
+        showIf: (s) => s.useSlabs, options: [
+          { value: 'ShellMITC4', label: 'ShellMITC4 — 4-node MITC, general purpose' },
+          { value: 'ShellDKGQ', label: 'ShellDKGQ — discrete Kirchhoff, thin slabs' },
+          { value: 'ShellNLDKGQ', label: 'ShellNLDKGQ — as DKGQ, large displacement' },
+        ]},
+      { id: 'slabThickness', type: 'number', gt: 0, label: 'Slab thickness', unit: 'length',
+        showIf: (s) => s.useSlabs,
+        d: { 'kN-m': 0.15, 'N-mm': 150, 'kip-in': 6 } },
+      { id: 'slabE', type: 'number', gt: 0, label: 'Slab elastic modulus', unit: 'stress',
+        showIf: (s) => s.useSlabs,
+        d: { 'kN-m': 30000000, 'N-mm': 30000, 'kip-in': 4350 },
+        hint: 'Separate from the frame modulus so a cracked slab can be softened on its own.' },
+      { id: 'slabMassSource', type: 'select', label: 'Slab mass', d: 'loads',
+        showIf: (s) => s.useSlabs, options: [
+          { value: 'loads', label: 'From the dead load, as before' },
+          { value: 'shell', label: 'From the shell density' },
+        ],
+        hint: 'The slab already contributes to the lumped nodal mass through the dead load. '
+            + 'Giving the shell a density as well would count it twice, so only one of the two '
+            + 'is used.' },
+      { kind: 'note-line', showIf: (s) => s.useSlabs,
+        label: 'The slab load still reaches the beams by tributary area — the shells add '
+             + 'stiffness and are not loaded. OpenSees shells ignore a surface load '
+             + '(ShellMITC4::addLoad refuses it), and one shell per panel would carry the '
+             + 'load straight into the columns rather than along the beams.' },
+      { kind: 'note-line', showIf: (s) => s.useSlabs && s.rigidDiaphragm,
+        label: 'Rigid diaphragms are on as well. The slab already ties the floor together in '
+             + 'plane, so the two are doing the same job and the diaphragm will dominate.' },
     ],
   },
 

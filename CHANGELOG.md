@@ -4,6 +4,37 @@ All notable changes to OpenSees Model Studio are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [semantic versioning](https://semver.org/).
 
+## [1.5.0] — 2026-08-26
+
+### Added
+
+- **Floor slabs, as real shell elements.** One `ShellMITC4`, `ShellDKGQ` or
+  `ShellNLDKGQ` per bay panel, on the four columns that bound it, over an
+  `ElasticMembranePlateSection`. They are part of the structure, not a drawing:
+  on the default frame the fundamental period drops from **0.335 s to 0.178 s**
+  because the floor is now tied together in plane.
+
+  Three decisions worth knowing about, each made deliberately:
+
+  - **The shells are not loaded.** OpenSees shells refuse a surface load —
+    `ShellMITC4::addLoad` rejects it outright — and with one element per panel
+    the load would travel straight into the corner columns instead of along the
+    beams. The slab load therefore keeps the tributary distribution that the
+    statics check verifies, and the base reaction is unchanged.
+  - **The slab's mass is counted once.** By default the shell is massless and
+    the floor mass stays where it was, in the lumped nodal mass from the dead
+    load. Choosing `From the shell density` gives the shell its own density and
+    takes the slab's self weight out of the nodal mass, so the total is
+    identical either way — measured at 211.603 t on all three variants.
+  - **The panel spans column to column.** Using the joints that already exist
+    means the slab and the frame share their whole boundary, with nothing to tie
+    together afterwards. A finer mesh would need the beams split to match, which
+    is a change to the tag scheme and is not in this release.
+
+- Slabs draw as translucent panels behind the frame, follow a deformed shape or
+  a mode shape like everything else, and appear in a plan only for the storey
+  being looked at. They have their own view toggle and legend entry.
+
 ## [1.4.0] — 2026-08-26
 
 ### Fixed

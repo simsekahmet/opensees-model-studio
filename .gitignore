@@ -13,3 +13,4 @@ tests/sample/
 tests/edited/
 tests/failing/
 tests/insertion/
+tests/slab/

@@ -201,9 +201,10 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
   const gLocal = new THREE.Group();
   const gAxes = new THREE.Group();
   const gLabels = new THREE.Group();
+  const gSlabs = new THREE.Group();
   const gDiagrams = new THREE.Group();
   const gSelection = new THREE.Group();
-  root.add(gElements, gNodes, gSupports, gGrid, gDims, gLocal, gAxes,
+  root.add(gSlabs, gElements, gNodes, gSupports, gGrid, gDims, gLocal, gAxes,
            gLabels, gDiagrams, gSelection);
 
   /* ── state ────────────────────────────────────────────────────────── */
@@ -229,6 +230,7 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
     grid: true,
     supports: true,
     axes: true,
+    slabs: true,
 
     // Result overlays. `deform` is 'none', 'displaced' or 'mode'; `diagram` is
     // null or one of the local force components.
@@ -388,7 +390,7 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
   /* ── scene construction ───────────────────────────────────────────── */
 
   function rebuild() {
-    for (const g of [gElements, gNodes, gSupports, gGrid, gDims, gLocal, gAxes,
+    for (const g of [gSlabs, gElements, gNodes, gSupports, gGrid, gDims, gLocal, gAxes,
                      gLabels, gDiagrams, gSelection]) clear(g);
     picks = [];
     for (const set of Object.values(labelSets)) set.length = 0;
@@ -420,6 +422,7 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
     if (opts.dims) buildDimensions();
     if (opts.localAxes) buildLocalAxes(visibleElements, scale);
     if (opts.axes) buildGlobalAxes(scale);
+    if (opts.slabs) buildSlabs(view);
     if (opts.diagram) buildDiagrams(visibleElements, scale);
     buildLabels(visibleElements, nodes);
     drawSelection();
@@ -505,6 +508,46 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
         picks.push({ object: mesh, elements: group, mode: 'instance' });
       }
     }
+  }
+
+  /**
+   * Floor slabs, drawn as the panels they are. They are translucent and sit
+   * behind everything else so the frame stays readable through them, and in a
+   * plan only the storey being looked at is drawn.
+   */
+  function buildSlabs(view) {
+    const panels = (view.slabs || []).filter((p) => (
+      opts.view !== 'plan' || p.level === opts.story
+    ));
+    if (!panels.length) return;
+
+    // Two triangles per panel, in one buffer: a floor of a hundred bays is one
+    // draw call rather than a hundred.
+    const positions = new Float32Array(panels.length * 18);
+    panels.forEach((panel, n) => {
+      // The corners come from the drawn nodes, so a slab follows a deformed
+      // shape or a mode exactly as the frame around it does.
+      const p = panel.nodes.map((tag) => {
+        const node = view.nodeByTag.get(tag);
+        return node ? [node.x, node.y, node.z] : [0, 0, 0];
+      });
+      const order = [0, 1, 2, 0, 2, 3];
+      order.forEach((k, v) => positions.set(p[k], n * 18 + v * 3));
+    });
+
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geom.computeVertexNormals();
+
+    const mesh = new THREE.Mesh(geom, new THREE.MeshLambertMaterial({
+      color: new THREE.Color(themeColor('--el-slab', '#5aa9f0')),
+      transparent: true,
+      opacity: 0.16,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    }));
+    mesh.renderOrder = -1;
+    gSlabs.add(mesh);
   }
 
   /** Bounding box of a set of points, as `{ min, max }`. */
@@ -1201,7 +1244,7 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
         p2: [b.x + ox, b.y + oy, b.z + oz],
       };
     });
-    return { ...model, nodes, elements, field };
+    return { ...model, nodes, elements, nodeByTag: byTag, field };
   }
 
   /**

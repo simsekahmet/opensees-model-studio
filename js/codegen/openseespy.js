@@ -20,6 +20,7 @@ import {
 /* Fixed tag constants, mirrored in the generated script. */
 const T = {
   matCore: 1, matCover: 2, matSteel: 3,
+  slabSection: 900,
   secCol: 1, secBeamX: 2, secBeamY: 3,
   intCol: 1, intBeamX: 2, intBeamY: 3,
   transfCol: 1, transfBeamX: 2, transfBeamY: 3,
@@ -586,6 +587,8 @@ export function generateScript(s, model, gm = null) {
 
   emitCopiedMembers(w, s, model, shared, special);
 
+  emitSlabs(w, s, model, u);
+
   if (isolated || s.useDampers) emitDevices(w, s, model, u, isolated);
 
   /* ──────────────────────────────── loads ──────────────────────────── */
@@ -673,8 +676,17 @@ export function generateScript(s, model, gm = null) {
       '    return dx * dy',
       '',
       '',
-      'q = DEAD_FLOOR + MASS_LIVE * LIVE_FLOOR',
-      '',
+      ...(s.useSlabs && s.slabMassSource === 'shell' ? [
+        '# The shells already carry the mass of the slab itself, so the lumped',
+        '# mass takes the dead load less that much — what is left is finishes,',
+        '# partitions and anything else sitting on the floor.',
+        'SLAB_SELF = RHO * G_ACC * SLAB_H',
+        'q = max(DEAD_FLOOR - SLAB_SELF, 0.0) + MASS_LIVE * LIVE_FLOOR',
+        '',
+      ] : [
+        'q = DEAD_FLOOR + MASS_LIVE * LIVE_FLOOR',
+        '',
+      ]),
       'for level in range(1, N_Z + 1):',
       '    for j in range(NY_N):',
       '        for i in range(NX_N):',
@@ -908,6 +920,50 @@ function isolatorArgs(s, def) {
 const chunk = (arr, n) => Array.from({ length: Math.ceil(arr.length / n) }, (_, i) => arr.slice(i * n, i * n + n));
 
 /* ═══════════════════════════════ analyses ═══════════════════════════ */
+
+/**
+ * Floor slabs, as one shell per bay panel on the four columns that bound it.
+ *
+ * The shells are not loaded. OpenSees shells refuse a surface load —
+ * `ShellMITC4::addLoad` rejects it outright — and with one element per panel the
+ * load would in any case travel straight to the corner columns instead of along
+ * the beams. The slab load therefore keeps the tributary distribution it had,
+ * and the shells contribute what they are here for: stiffness, and optionally
+ * their own mass.
+ */
+function emitSlabs(w, s, model, u) {
+  if (!model.slabs || !model.slabs.length) return;
+
+  const thickness = Number(s.slabThickness) || 0;
+  const fromShell = s.slabMassSource === 'shell';
+
+  w(
+    `# Floor slabs — ${model.slabs.length} panels of ${s.slabElement}`,
+    `SLAB_H = ${pf(thickness)}  # thickness [${u.length}]`,
+    `SLAB_E = ${pf(s.slabE)}  # [${u.stress}]`,
+    fromShell
+      ? 'SLAB_RHO = RHO  # the shell carries the mass of the slab itself'
+      : 'SLAB_RHO = 0.0  # the mass is already in the lumped nodal mass below',
+    '',
+    `ops.section('ElasticMembranePlateSection', ${T.slabSection}, SLAB_E, NU, SLAB_H, SLAB_RHO)`,
+    '',
+    '',
+    'def slab_tag(level, i, j):',
+    '    return 900000 + level * 1000 + j * N_X + i + 1',
+    '',
+    '',
+    '# Each panel spans the four columns that bound it, so the slab and the frame',
+    '# share their whole boundary and nothing has to be tied together afterwards.',
+    'for level in range(1, N_Z + 1):',
+    '    for j in range(N_Y):',
+    '        for i in range(N_X):',
+    `            ops.element(${py(s.slabElement)}, slab_tag(level, i, j),`,
+    '                        node_tag(level, i, j), node_tag(level, i + 1, j),',
+    '                        node_tag(level, i + 1, j + 1), node_tag(level, i, j + 1),',
+    `                        ${T.slabSection})`,
+    ''
+  );
+}
 
 /** Marks the comment lines that carry the project back into the studio. */
 export const PROJECT_MARKER = '# osms:';

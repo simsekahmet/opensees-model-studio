@@ -40,6 +40,7 @@
   --el-select:   #2dd4bf;
   --el-isolator: #f05a5a;
   --el-damper:   #c58af9;
+  --el-slab:     #7f8fa6;
 
   /* Coordinate axes — global triad and element local axes */
   --axis-x:      #ff5f56;
@@ -92,6 +93,7 @@ html[data-theme="light"] {
   --el-select:   #0f766e;
   --el-isolator: #c73b3b;
   --el-damper:   #7b47c9;
+  --el-slab:     #8d9bb0;
 
   --axis-x:      #d43b32;
   --axis-y:      #1f9142;

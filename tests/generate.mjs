@@ -103,6 +103,14 @@ for (const algorithmCmd of ['Linear', 'Newton', 'ModifiedNewton', 'KrylovNewton'
   add(`algorithm-${algorithmCmd}`, { algorithmCmd });
 }
 
+/* ── floor slabs ─────────────────────────────────────────────────────── */
+for (const slabElement of ['ShellMITC4', 'ShellDKGQ', 'ShellNLDKGQ']) {
+  add(`slab-${slabElement}`, { useSlabs: true, slabElement, runModal: true });
+}
+add('slab-mass-from-shell', { useSlabs: true, slabMassSource: 'shell', runModal: true });
+add('slab-and-diaphragm', { useSlabs: true, rigidDiaphragm: true, runModal: true });
+add('slab-and-isolation', { useSlabs: true, useIsolation: true, useRecorders: true });
+
 /* ── analysis cases ──────────────────────────────────────────────────── */
 add('modal', { runModal: true });
 add('pushover', { runPushover: true });

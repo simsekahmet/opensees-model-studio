@@ -287,6 +287,7 @@ const TOGGLES = {
   'tg-grid': 'grid',
   'tg-supports': 'supports',
   'tg-axes': 'axes',
+  'tg-slabs': 'slabs',
 };
 
 const VIEW_KEY = 'osms.view.v1';
@@ -640,6 +641,7 @@ function paintLegend(stats) {
     'legend-beam': stats.beamsX + stats.beamsY,
     'legend-iso': stats.isolators,
     'legend-damp': stats.dampers,
+    'legend-slab': stats.slabs,
   };
   let any = false;
   for (const [id, count] of Object.entries(present)) {

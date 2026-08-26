@@ -7,7 +7,7 @@ tables, and a runnable `.py` script — all from a static page.
 
 **Live app:** https://simsekahmet.github.io/opensees-model-studio/
 
-**Version 1.4.0** — see [CHANGELOG.md](CHANGELOG.md).
+**Version 1.5.0** — see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -128,6 +128,11 @@ Everything you set in the sidebar maps onto a real OpenSeesPy command:
   `ElasticTimoshenkoBeam`, with `Lobatto` / `Legendre` / `NewtonCotes` / `Radau` /
   `Trapezoidal` integration and `Linear` / `PDelta` / `Corotational` transformations.
 - **Constraints** — base fixity and optional `rigidDiaphragm` master nodes.
+- **Slabs** — one `ShellMITC4`, `ShellDKGQ` or `ShellNLDKGQ` per bay panel over an
+  `ElasticMembranePlateSection`, on the four columns that bound it. The shells carry
+  stiffness and, if asked, their own mass; the slab load keeps its tributary
+  distribution to the beams, because OpenSees shells refuse a surface load and one
+  element per panel would take it straight into the columns.
 - **Loads** — slab loads distributed to beams by exact 45° tributary areas or one-way
   spans, plus member self weight and lumped seismic mass.
 - **Analysis** — the full `constraints` / `numberer` / `system` / `test` / `algorithm`
