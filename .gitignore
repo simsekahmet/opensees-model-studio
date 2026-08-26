@@ -12,3 +12,4 @@ tests/out/
 tests/sample/
 tests/edited/
 tests/failing/
+tests/insertion/

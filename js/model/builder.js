@@ -20,6 +20,7 @@ import { expandList, validateState, firstIssue } from '../state.js';
 import { allSections, sectionWithDims, EDITABLE_DIMS, usesFibers } from './sections.js';
 import { ISOLATOR_TYPES } from './devices.js';
 import { getRecord } from './groundmotion.js';
+import { insertionOffset, hasOffset, DEFAULT_INSERTION } from './insertion.js';
 
 const NODE_BASE = 10000;
 const MASTER_OFFSET = 9999;
@@ -96,7 +97,10 @@ export function buildModel(s) {
   /* ── nodes ──────────────────────────────────────────────────────────── */
   const nodes = [];
   const nodeByTag = new Map();
-  const fixity = FIXITY[s.baseFixity] ?? FIXITY.Fixed;
+  // `Free` is deliberately null, and `??` would read that as "no entry" and
+  // substitute a fixed base — which is how an unrestrained model came to be
+  // drawn standing on fixed supports.
+  const fixity = Object.hasOwn(FIXITY, s.baseFixity) ? FIXITY[s.baseFixity] : FIXITY.Fixed;
 
   // With base isolation the restraint moves down to a separate foundation
   // node, and the superstructure base is lifted by the bearing height.
@@ -147,7 +151,7 @@ export function buildModel(s) {
           tag,
           x: xs[i] + dx, y: ys[j] + dy, z: dz,
           i, j, level: -1,
-          fix: fixity ?? FIXITY.Fixed,
+          fix: fixity,
           mass: 0, master: false, foundation: true,
           moved: !!(dx || dy || dz),
         };
@@ -357,6 +361,18 @@ export function buildModel(s) {
     }
   }
 
+  /* ── insertion points ───────────────────────────────────────────────── */
+
+  // The offset is rigid: the joints stay where they are and the member is
+  // carried off the line, which is what `-jntOffset` does in the script.
+  const insertedTags = [];
+  for (const e of elements) {
+    const name = overrides[e.tag]?.insertion || DEFAULT_INSERTION;
+    e.insertion = name;
+    e.offset = insertionOffset(e.kind, e.section, e.p1, e.p2, name);
+    if (hasOffset(e.offset)) insertedTags.push(e.tag);
+  }
+
   /* ── deleted and copied members ─────────────────────────────────────── */
 
   // Deletions are applied by tag rather than by rebuilding the grid without
@@ -491,6 +507,11 @@ export function buildModel(s) {
     warn(`${added.length} member${added.length > 1 ? 's were' : ' was'} copied off the grid. `
       + 'Copies carry no slab load or tributary mass — they are members only.');
   }
+  if (insertedTags.length) {
+    warn(`${insertedTags.length} member${insertedTags.length > 1 ? 's are' : ' is'} set on an `
+      + 'insertion point other than the centroid. The offset is written as a rigid end offset, '
+      + 'so it adds real stiffness and eccentricity — not just a drawing shift.');
+  }
   if (s.runTimeHistory && !getRecord()) {
     warn('Time history is on but no acceleration record is loaded. The script still expects the '
       + 'file beside it at run time and stops if it is missing.');
@@ -523,6 +544,7 @@ export function buildModel(s) {
       editedElements: editedTags.length,
       deletedElements: deletedTags.length,
       addedElements: added.length,
+      insertedElements: insertedTags.length,
       dof: nodes.length * 6,
       floorArea,
       totalFloorArea: floorArea * nz,

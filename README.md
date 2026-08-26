@@ -7,7 +7,7 @@ tables, and a runnable `.py` script — all from a static page.
 
 **Live app:** https://simsekahmet.github.io/opensees-model-studio/
 
-**Version 1.2.0** — see [CHANGELOG.md](CHANGELOG.md).
+**Version 1.3.0** — see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -39,6 +39,10 @@ selection.
 - **Ctrl + R** copies the selected members anywhere in three axes — a column to
   the story above, a beam half a bay across. Copies are members only: they carry
   no slab load and no tributary mass.
+- **Insertion point** — the inspector names which part of the section the joint
+  line runs through: the centroid, or any of the nine cardinal points. It is
+  written out as a rigid end offset (`-jntOffset`), so a beam hung under the
+  slab line is genuinely eccentric rather than merely drawn that way.
 
 Press <kbd>?</kbd> for the full list of keys.
 

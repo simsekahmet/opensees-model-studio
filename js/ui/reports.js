@@ -7,6 +7,7 @@
 
 import { unitsOf, fmt } from '../units.js';
 import { EDITABLE_DIMS, usesFibers, editedSectionGroups } from '../model/sections.js';
+import { INSERTION_POINTS, DEFAULT_INSERTION, INSERTABLE_KINDS } from '../model/insertion.js';
 
 const MAX_ROWS = 600;
 
@@ -477,6 +478,41 @@ function memberEditor(elements, s, { onEdit, onResetEdit } = {}) {
     box.append(loadRow);
   }
 
+  // Insertion point — which part of the section the joint line runs through.
+  let insertionSelect = null;
+  if (editable.every((e) => INSERTABLE_KINDS.includes(e.kind))) {
+    const cell = document.createElement('label');
+    cell.className = 'move-cell';
+    const lab = document.createElement('span');
+    lab.textContent = 'Insertion point';
+
+    insertionSelect = document.createElement('select');
+    insertionSelect.className = 'select';
+    const first = editable[0].insertion || DEFAULT_INSERTION;
+    const uniform = editable.every((e) => (e.insertion || DEFAULT_INSERTION) === first);
+    if (!uniform) {
+      const mixed = document.createElement('option');
+      mixed.value = '';
+      mixed.textContent = 'mixed';
+      insertionSelect.append(mixed);
+    }
+    for (const [id, point] of Object.entries(INSERTION_POINTS)) {
+      const o = document.createElement('option');
+      o.value = id;
+      o.textContent = point.label;
+      insertionSelect.append(o);
+    }
+    insertionSelect.value = uniform ? first : '';
+    insertionSelect.dataset.initial = insertionSelect.value;
+
+    cell.append(lab, insertionSelect);
+    const row = document.createElement('div');
+    row.className = 'move-row';
+    row.style.gridTemplateColumns = '1fr';
+    row.append(cell);
+    box.append(row);
+  }
+
   const actions = document.createElement('div');
   actions.className = 'move-actions';
 
@@ -490,6 +526,10 @@ function memberEditor(elements, s, { onEdit, onResetEdit } = {}) {
       if (text === '' || text === inp.dataset.initial) continue;   // untouched
       const v = Number(text);
       if (Number.isFinite(v)) patch[key] = v;
+    }
+    if (insertionSelect && insertionSelect.value
+        && insertionSelect.value !== insertionSelect.dataset.initial) {
+      patch.insertion = insertionSelect.value;
     }
     if (Object.keys(patch).length) onEdit(editable.map((e) => e.tag), patch);
   });
@@ -505,7 +545,9 @@ function memberEditor(elements, s, { onEdit, onResetEdit } = {}) {
 
   const hint = document.createElement('p');
   hint.className = 'move-hint';
-  hint.textContent = 'Applied on Build model, and written into the generated script.';
+  hint.textContent = 'Applied on Build model, and written into the generated script. An '
+    + 'insertion point away from the centroid becomes a rigid end offset, so it changes the '
+    + 'analysis, not just the drawing.';
   box.append(hint);
 
   return box;

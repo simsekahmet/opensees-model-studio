@@ -44,15 +44,17 @@ const ANCHOR = {
 };
 
 /**
- * Section-local axes expressed in world coordinates, per element family.
- * These are the same triads the `geomTransf` vecxz values produce in the
- * generated script, so the local-axis display is not a separate convention.
+ * The `vecxz` each family is given in the generated script. OpenSees builds the
+ * member's triad from this and the member's own axis, so deriving the triad the
+ * same way here means the drawing and the analysis agree even when a joint has
+ * been moved and the member no longer runs along a global axis.
  */
-const BASIS = {
-  column: [new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, -1, 0), new THREE.Vector3(1, 0, 0)],
-  beamX:  [new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, -1, 0)],
-  beamY:  [new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 1), new THREE.Vector3(1, 0, 0)],
-  isolator: [new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, -1, 0), new THREE.Vector3(1, 0, 0)],
+const VECXZ = {
+  column: new THREE.Vector3(1, 0, 0),
+  beamX: new THREE.Vector3(0, -1, 0),
+  beamY: new THREE.Vector3(1, 0, 0),
+  isolator: new THREE.Vector3(1, 0, 0),
+  damper: new THREE.Vector3(0, 0, 1),
 };
 
 const ZERO = [0, 0, 0];
@@ -126,18 +128,30 @@ function rollerBall(s, x) {
 const KINDS = ['column', 'beamX', 'beamY', 'isolator', 'damper'];
 
 /**
- * Local triad of one element. Frame members and isolators are axis aligned so
- * they use the fixed table; a damper runs diagonally, so its triad is derived
- * from the member axis with the global Z as the reference up direction.
+ * Local triad of one element, built the way OpenSees builds it: local x runs
+ * from end i to end j, `vecxz` fixes the roll about it, local y is `vecxz × x`
+ * and local z closes the set.
+ *
+ * Taking x from the real end coordinates rather than from the family is what
+ * makes a member whose joint has been moved draw along the member — the
+ * extruded prism follows the skew instead of standing where the grid used to be.
  */
 function basisOf(e) {
-  if (BASIS[e.kind]) return BASIS[e.kind];
   const x = new THREE.Vector3(
     e.p2[0] - e.p1[0], e.p2[1] - e.p1[1], e.p2[2] - e.p1[2]
-  ).normalize();
-  const ref = Math.abs(x.z) > 0.99 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 0, 1);
-  const z = new THREE.Vector3().crossVectors(x, ref).normalize();
-  const y = new THREE.Vector3().crossVectors(z, x).normalize();
+  );
+  if (x.lengthSq() < 1e-18) x.set(0, 0, 1);
+  x.normalize();
+
+  let reference = VECXZ[e.kind] || VECXZ.damper;
+  // A reference parallel to the member leaves the roll undefined, so a second
+  // one is used — any direction off the axis gives a usable triad.
+  if (Math.abs(reference.dot(x)) > 0.999) {
+    reference = Math.abs(x.z) > 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 0, 1);
+  }
+
+  const y = new THREE.Vector3().crossVectors(reference, x).normalize();
+  const z = new THREE.Vector3().crossVectors(x, y).normalize();
   return [x, y, z];
 }
 
@@ -198,6 +212,7 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
   let visibleElements = [];
   let visibleNodes = [];
   let nodePick = null;     // { object, nodes }
+  let drawnByTag = new Map();   // tag → element as drawn, offsets included
   const selection = new Set();
   const nodeSelection = new Set();
 
@@ -372,6 +387,7 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
     animated = view.field ? { field: view.field, targets: [] } : null;
 
     visibleElements = view.elements.filter(elementVisible);
+    drawnByTag = new Map(view.elements.map((e) => [e.tag, e]));
     const nodeTags = new Set();
     for (const e of visibleElements) { nodeTags.add(e.ni); nodeTags.add(e.nj); }
     const nodes = view.nodes.filter((n) => nodeTags.has(n.tag) || (n.master && opts.view === 'view3d'));
@@ -980,7 +996,7 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
     if (selection.size) {
       const pts = [];
       for (const tag of selection) {
-        const e = model.elementByTag.get(tag);
+        const e = drawnByTag.get(tag) || model.elementByTag.get(tag);
         if (e) pts.push(...e.p1, ...e.p2);
       }
       if (pts.length) {
@@ -1133,17 +1149,29 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
    */
   function displacedModel() {
     const field = deformationField();
-    if (!field) return model;
+    // An insertion point carries the member off its joint line; the joints stay
+    // where they are, so only the member's own ends move.
+    const offset = model.elements.some((e) => e.offset && Math.hypot(...e.offset) > 1e-9);
+    if (!field && !offset) return model;
 
-    const nodes = model.nodes.map((n) => {
-      const d = field.get(n.tag);
-      return d ? { ...n, x: n.x + d[0], y: n.y + d[1], z: n.z + d[2] } : n;
-    });
+    const nodes = field
+      ? model.nodes.map((n) => {
+        const d = field.get(n.tag);
+        return d ? { ...n, x: n.x + d[0], y: n.y + d[1], z: n.z + d[2] } : n;
+      })
+      : model.nodes;
+
     const byTag = new Map(nodes.map((n) => [n.tag, n]));
     const elements = model.elements.map((e) => {
       const a = byTag.get(e.ni);
       const b = byTag.get(e.nj);
-      return a && b ? { ...e, p1: [a.x, a.y, a.z], p2: [b.x, b.y, b.z] } : e;
+      if (!a || !b) return e;
+      const [ox, oy, oz] = e.offset && offset ? e.offset : ZERO;
+      return {
+        ...e,
+        p1: [a.x + ox, a.y + oy, a.z + oz],
+        p2: [b.x + ox, b.y + oy, b.z + oz],
+      };
     });
     return { ...model, nodes, elements, field };
   }

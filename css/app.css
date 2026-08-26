@@ -1000,7 +1000,15 @@ kbd {
 }
 
 /* The credit and licence line under the sidebar warning. */
-.foot-meta { flex-direction: column; align-items: center; gap: 2px; text-align: center; }
+.foot-meta { flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; }
 .foot-credit { font-family: var(--font); }
 .foot-credit b { color: var(--text-2); font-weight: 600; }
 .foot-rights { font-family: var(--font); font-size: 10px; color: var(--text-3); }
+
+/* Which of the three ways of looking at the model is on. */
+.toolbar-group.is-active-view label { color: var(--accent); }
+.toolbar-group.is-active-view .mini-select {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--accent);
+}

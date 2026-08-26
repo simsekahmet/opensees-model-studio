@@ -424,13 +424,13 @@ function typing(target) {
 /* ─────────────────── deleting and copying members ───────────────────── */
 
 function deleteSelection() {
-  const tags = viewer.getSelection();
-  if (!tags.length) {
+  const picked = viewer.getSelection();
+  if (!picked.length) {
     return toast('Nothing selected', 'Pick the members to delete first.', 'info', 2500);
   }
-  deleteElements(tags);
+  deleteElements(picked.map((e) => e.tag));
   compile();
-  toast(`${tags.length} member${tags.length > 1 ? 's' : ''} deleted`,
+  toast(`${picked.length} member${picked.length > 1 ? 's' : ''} deleted`,
     'The remaining tags are unchanged. Ctrl+Z brings them back.', 'ok');
 }
 
@@ -439,12 +439,10 @@ function deleteSelection() {
  * units along the global axes, so "one story up" is simply the story height.
  */
 async function askReplicate() {
-  const tags = viewer.getSelection();
-  if (!tags.length) {
+  const picked = viewer.getSelection();
+  if (!picked.length) {
     return toast('Nothing selected', 'Pick the members to copy first.', 'info', 2500);
   }
-  const picked = model.elements.filter((e) => tags.includes(e.tag));
-  if (!picked.length) return;
 
   const u = unitsOf(state.unitSystem);
   const answer = await promptDialog({
@@ -740,31 +738,37 @@ function recompileKeepingJoints(tags) {
 
 function onTabChange() { /* the scene keeps whatever view the pickers set */ }
 
-/* Story and elevation are alternatives: choosing one clears the other, and
-   clearing both returns the scene to the full 3D model. */
-dom.selStory.addEventListener('change', () => {
-  if (dom.selStory.value === 'all') {
-    // "All stories" means the whole model, so an elevation cannot still be on.
-    dom.selFrame.value = 'none';
-    viewer.setOptions({ view: 'view3d' });
-  } else {
-    dom.selFrame.value = 'none';
-    viewer.setOptions({ view: 'plan', story: Number(dom.selStory.value) });
-  }
-  tabs.select('view3d');
-});
+/**
+ * Story, elevation and 3D are three ways of looking at one model, so exactly one
+ * of them is active. The pickers keep their choice while another view is on, so
+ * stepping from a plan to 3D and back does not lose the floor you were reading.
+ */
+let sceneView = 'view3d';
 
-dom.selFrame.addEventListener('change', () => {
-  if (dom.selFrame.value === 'none') {
-    dom.selStory.value = 'all';
-    viewer.setOptions({ view: 'view3d' });
-  } else {
-    dom.selStory.value = 'all';
+function setSceneView(next, focus = true) {
+  sceneView = next;
+  if (next === 'plan') {
+    viewer.setOptions({ view: 'plan', story: Number(dom.selStory.value) });
+  } else if (next === 'elevation') {
     const [axis, index] = dom.selFrame.value.split(':');
     viewer.setOptions({ view: 'elevation', frame: { axis, index: Number(index) } });
+  } else {
+    viewer.setOptions({ view: 'view3d' });
   }
-  tabs.select('view3d');
-});
+  paintSceneView();
+  // Rebuilding must not drag the user away from the tab they were reading.
+  if (focus) tabs.select('view3d');
+}
+
+function paintSceneView() {
+  el('btn-view-3d').classList.toggle('is-active', sceneView === 'view3d');
+  dom.storyPicker.classList.toggle('is-active-view', sceneView === 'plan');
+  dom.framePicker.classList.toggle('is-active-view', sceneView === 'elevation');
+}
+
+el('btn-view-3d').addEventListener('click', () => setSceneView('view3d'));
+dom.selStory.addEventListener('change', () => setSceneView('plan'));
+dom.selFrame.addEventListener('change', () => setSceneView('elevation'));
 
 /**
  * Refills the story and elevation pickers after a rebuild, keeping whatever the
@@ -774,18 +778,16 @@ dom.selFrame.addEventListener('change', () => {
  */
 function populatePickers() {
   const { nx, ny, nz, xs, ys } = model.grid;
-  const wantedStory = dom.selStory.value || 'all';
-  const wantedFrame = dom.selFrame.value || 'none';
+  const wantedStory = dom.selStory.value;
+  const wantedFrame = dom.selFrame.value;
 
   dom.selStory.textContent = '';
-  dom.selStory.append(option('all', 'All stories — 3D'));
   for (let level = nz; level >= 1; level--) {
     dom.selStory.append(option(String(level),
       level === nz ? `Roof — level ${level}` : `Level ${level}`));
   }
 
   dom.selFrame.textContent = '';
-  dom.selFrame.append(option('none', 'None — 3D'));
   for (let j = 0; j <= ny; j++) {
     dom.selFrame.append(option(`x:${j}`, `X–Z frame at Y = ${fmt(ys[j], 2)}`));
   }
@@ -793,19 +795,15 @@ function populatePickers() {
     dom.selFrame.append(option(`y:${i}`, `Y–Z frame at X = ${fmt(xs[i], 2)}`));
   }
 
-  // A selection that no longer exists — the story it named has been removed —
-  // falls back to the 3D view rather than silently showing a different floor.
-  dom.selStory.value = has(dom.selStory, wantedStory) ? wantedStory : 'all';
-  dom.selFrame.value = has(dom.selFrame, wantedFrame) ? wantedFrame : 'none';
+  // A choice that no longer exists — the story it named has been removed —
+  // drops back to 3D rather than silently showing a different floor.
+  if (has(dom.selStory, wantedStory)) dom.selStory.value = wantedStory;
+  else if (sceneView === 'plan') sceneView = 'view3d';
 
-  if (dom.selStory.value !== 'all') {
-    viewer.setOptions({ view: 'plan', story: Number(dom.selStory.value) });
-  } else if (dom.selFrame.value !== 'none') {
-    const [axis, index] = dom.selFrame.value.split(':');
-    viewer.setOptions({ view: 'elevation', frame: { axis, index: Number(index) } });
-  } else {
-    viewer.setOptions({ view: 'view3d' });
-  }
+  if (has(dom.selFrame, wantedFrame)) dom.selFrame.value = wantedFrame;
+  else if (sceneView === 'elevation') sceneView = 'view3d';
+
+  setSceneView(sceneView, false);
 }
 
 const option = (value, label) => {

@@ -34,6 +34,76 @@ const ELEMENT_NAME = {
 
 const usesSection = (name) => name === 'forceBeamColumn' || name === 'dispBeamColumn';
 
+/** The vecxz triples exactly as they are written into the script above. */
+const VECXZ_LITERAL = {
+  column: '1.0, 0.0, 0.0',
+  beamX: '0.0, -1.0, 0.0',
+  beamY: '1.0, 0.0, 0.0',
+};
+
+/**
+ * Members carrying an insertion offset, grouped so that members sharing the
+ * same family and the same offset share one transformation.
+ */
+const familyPrefix = (kind, shared) =>
+  (kind === 'column' ? 'COL' : (kind === 'beamY' && !shared ? 'BY' : 'BX'));
+
+const familyIntegration = (kind) =>
+  (kind === 'column' ? T.intCol : kind === 'beamY' ? T.intBeamY : T.intBeamX);
+
+/**
+ * One entry per member that cannot come out of the parametric loops unchanged,
+ * carrying the section, transformation and integration it actually needs. A
+ * member that was both resized and moved onto an insertion point appears once.
+ */
+function specialMembers(model, edited, inserted, shared) {
+  const byTag = new Map();
+
+  for (const g of edited.groups) {
+    for (const e of g.elements) {
+      byTag.set(e.tag, {
+        e, prefix: g.prefix, intTag: g.intTag, transfTag: transfOf(e.kind),
+      });
+    }
+  }
+  for (const g of inserted.groups) {
+    for (const e of g.elements) {
+      const existing = byTag.get(e.tag);
+      if (existing) existing.transfTag = g.transfTag;
+      else {
+        byTag.set(e.tag, {
+          e,
+          prefix: familyPrefix(e.kind, shared),
+          intTag: familyIntegration(e.kind),
+          transfTag: g.transfTag,
+        });
+      }
+    }
+  }
+
+  return [...byTag.values()].sort((a, b) => a.e.tag - b.e.tag);
+}
+
+function groupInsertions(model) {
+  const byKey = new Map();
+  for (const e of model.elements) {
+    if (!e.offset || !VECXZ_LITERAL[e.kind]) continue;
+    if (Math.hypot(...e.offset) < 1e-9) continue;
+    const key = `${e.kind}|${e.offset.map((v) => v.toFixed(9)).join(',')}`;
+    if (!byKey.has(key)) {
+      byKey.set(key, { kind: e.kind, offset: e.offset, insertion: e.insertion, elements: [] });
+    }
+    byKey.get(key).elements.push(e);
+  }
+
+  const groups = [...byKey.values()].map((g, n) => ({
+    ...g,
+    transfTag: 600 + n,
+    label: `${g.elements.length} × ${g.kind} on ${g.insertion}`,
+  }));
+  return { groups, tags: groups.flatMap((g) => g.elements.map((e) => e.tag)) };
+}
+
 /** Tag a beam integration should reference, accounting for the Aggregator wrap. */
 const sectionRef = (s, tag) => (s.useAggregator ? tag + 20 : tag);
 
@@ -362,6 +432,23 @@ export function generateScript(s, model, gm = null) {
     ''
   );
 
+  // Members set on an insertion point other than the centroid need their own
+  // transformation: the joints stay put and the member is carried off the line
+  // by a rigid end offset, which is what `-jntOffset` means.
+  const inserted = groupInsertions(model);
+  if (inserted.groups.length) {
+    w('# Insertion points. The offset is rigid, so it carries moment as well as',
+      '# geometry — a beam hung off the slab line is eccentric, and says so.');
+    for (const g of inserted.groups) {
+      const transf = g.kind === 'column' ? s.colTransf : s.beamTransf;
+      const vecxz = VECXZ_LITERAL[g.kind];
+      const d = g.offset.map(pf).join(', ');
+      w(`ops.geomTransf(${py(transf)}, ${g.transfTag}, ${vecxz}, '-jntOffset', ${d}, ${d})`
+        + `  # ${g.label}`);
+    }
+    w('');
+  }
+
   /* ──────────────────────── beam integrations ──────────────────────── */
   const needInt = usesSection(s.colElement) || usesSection(s.beamElement);
   if (needInt) {
@@ -394,7 +481,9 @@ export function generateScript(s, model, gm = null) {
     );
   }
   const deletedTags = Object.keys(s.deletedElements || {}).map(Number).filter(Number.isFinite);
-  const anySkipped = edited.tags.length || deletedTags.length;
+  const special = specialMembers(model, edited, inserted, shared);
+  const specialTags = special.filter((m) => !m.e.added).map((m) => m.e.tag);
+  const anySkipped = specialTags.length || deletedTags.length;
   const skip = (tagExpr, indent = '            ') => (anySkipped
     ? [`${indent}if ${tagExpr} in SKIPPED:`, `${indent}    continue`]
     : []);
@@ -408,7 +497,10 @@ export function generateScript(s, model, gm = null) {
     );
   }
   if (anySkipped) {
-    w(`SKIPPED = ${edited.tags.length ? 'EDITED' : 'set()'}${deletedTags.length ? ' | DELETED' : ''}`, '');
+    w('# Members the loops below leave alone: they are written out one by one',
+      '# further down, or they were deleted.',
+      `SKIPPED = {${specialTags.join(', ')}}${deletedTags.length ? ' | DELETED' : ''}`,
+      '');
   }
 
   w(
@@ -484,18 +576,17 @@ export function generateScript(s, model, gm = null) {
     );
   }
 
-  if (edited.tags.length) {
-    w('# Members with edited dimensions');
-    for (const g of edited.groups) {
-      for (const e of g.elements) {
-        w('ops.element(' + elementArgs(s, e.kind, String(e.tag), String(e.ni), String(e.nj),
-          g.prefix, transfOf(e.kind), g.intTag) + ')');
-      }
+  const onGrid = special.filter((m) => !m.e.added);
+  if (onGrid.length) {
+    w('# Members with their own section, insertion point, or both.');
+    for (const m of onGrid) {
+      w('ops.element(' + elementArgs(s, m.e.kind, String(m.e.tag), String(m.e.ni), String(m.e.nj),
+        m.prefix, m.transfTag, m.intTag) + ')');
     }
     w('');
   }
 
-  emitCopiedMembers(w, s, model, shared);
+  emitCopiedMembers(w, s, model, shared, special);
 
   if (isolated || s.useDampers) emitDevices(w, s, model, u, isolated);
 
@@ -867,9 +958,10 @@ function chunkString(text, size) {
  * written out literally: their joints first — reusing one that already exists
  * where the ends coincide — and then the members themselves.
  */
-function emitCopiedMembers(w, s, model, shared) {
+function emitCopiedMembers(w, s, model, shared, special = []) {
   const added = model.elements.filter((e) => e.added);
   if (!added.length) return;
+  const byTag = new Map(special.map((m) => [m.e.tag, m]));
 
   const newNodes = model.nodes.filter((n) => n.added);
   w('# Members copied off the grid in the studio. They carry no slab load or',
@@ -881,11 +973,12 @@ function emitCopiedMembers(w, s, model, shared) {
   if (newNodes.length) w('');
 
   for (const e of added) {
-    const prefix = e.kind === 'column' ? 'COL' : (e.kind === 'beamY' && !shared ? 'BY' : 'BX');
-    const integration = e.kind === 'column' ? T.intCol
-      : e.kind === 'beamY' ? T.intBeamY : T.intBeamX;
+    const own = byTag.get(e.tag);
+    const prefix = own ? own.prefix : familyPrefix(e.kind, shared);
+    const integration = own ? own.intTag : familyIntegration(e.kind);
+    const transf = own ? own.transfTag : transfOf(e.kind);
     w('ops.element(' + elementArgs(s, e.kind, String(e.tag), String(e.ni), String(e.nj),
-      prefix, transfOf(e.kind), integration) + ')');
+      prefix, transf, integration) + ')');
   }
   w('');
 }

@@ -4,6 +4,43 @@ All notable changes to OpenSees Model Studio are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [semantic versioning](https://semver.org/).
 
+## [1.3.0] — 2026-08-26
+
+### Fixed
+
+- **Deleting and copying members did nothing.** `viewer.getSelection()` hands
+  back the members themselves, not their tags, and both were passing that
+  straight into functions expecting tags — so the delete list was keyed by
+  `"[object Object]"` and matched nothing, and the copy filter never found a
+  member. The toast said it had worked. Both now take the tags off the members
+  they were given.
+- **An unrestrained base was drawn standing on fixed supports.** `Free` is
+  deliberately `null` in the restraint table, and `??` read that as "no entry"
+  and substituted a fixed base. The script was always right; only the drawing
+  lied. A free base now shows its joints and nothing else.
+- **Extruded members ignored moved joints.** The prism was oriented from the
+  member's *family* — columns up, X beams along X — rather than from its own
+  ends, so a member whose joint had been moved was drawn along the old grid line
+  at its new, longer length. The triad is now built the way OpenSees builds it,
+  from the member's own axis and the `vecxz` its family is given, which
+  reproduces the old orientation exactly for members still on the grid.
+
+### Added
+
+- **Frame insertion points.** The inspector offers the nine cardinal points and
+  the centroid: which part of the section the joint line runs through. It is
+  written out as `geomTransf(..., '-jntOffset', …)`, so the joints stay where
+  they are and the member is carried off the line by a rigid offset — a spandrel
+  flush with the face, a beam hung under the slab line — and the eccentricity is
+  real, not a drawing shift.
+- **A 3D button** in the scene toolbar. Story and elevation no longer carry a
+  "back to 3D" entry of their own; they keep their choice while 3D is on, so
+  stepping out to the whole model and back does not lose the floor being read.
+
+### Changed
+
+- The credit and licence under the sidebar warning are left-aligned.
+
 ## [1.2.0] — 2026-08-26
 
 ### Fixed
