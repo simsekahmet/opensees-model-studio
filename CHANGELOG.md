@@ -4,6 +4,20 @@ All notable changes to OpenSees Model Studio are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [semantic versioning](https://semver.org/).
 
+## [1.5.1] — 2026-08-26
+
+### Fixed
+
+- **The selection was thrown away on every rebuild**, which made moving a joint
+  look like it had failed. The move landed, but `setModel` cleared the selection
+  and the move panel closed with it, so a second nudge had no target. Selections
+  now survive a rebuild — tags are stable by design, and only a tag that no
+  longer exists is dropped.
+- **Restoring a selection ran before the model existed.** `compile` became
+  asynchronous in 1.2.0, so the calls that put the selection back after a move or
+  a member edit were working against the model that was about to be replaced.
+  They wait for the rebuild now, and the inspector comes back with them.
+
 ## [1.5.0] — 2026-08-26
 
 ### Added

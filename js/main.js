@@ -595,7 +595,11 @@ async function compile() {
   dom.sceneEmpty.classList.add('is-hidden');
 
   viewer.setModel(model);
-  showSelection({ mode: 'element', elements: [], nodes: [] });
+  showSelection({
+    mode: viewer.getNodeSelection().length ? 'node' : 'element',
+    elements: viewer.getSelection(),
+    nodes: viewer.getNodeSelection(),
+  });
 
   populatePickers();
   refreshPanels();
@@ -717,9 +721,10 @@ function resetMemberEdit(tags) {
   recompileKeepingMembers(tags);
 }
 
-function recompileKeepingMembers(tags) {
-  compile();
+async function recompileKeepingMembers(tags) {
+  await compile();
   viewer.setSelection(tags);
+  showSelection({ mode: 'element', elements: viewer.getSelection(), nodes: [] });
 }
 
 /** Moves the selected joints, then rebuilds with them still selected. */
@@ -731,9 +736,10 @@ function applyMove(tags, delta) {
     'ok');
 }
 
-function recompileKeepingJoints(tags) {
-  compile();
+async function recompileKeepingJoints(tags) {
+  await compile();
   viewer.setNodeSelection(tags);
+  showSelection({ mode: 'node', elements: [], nodes: viewer.getNodeSelection() });
 }
 
 /* ──────────────────────────── view controls ─────────────────────────── */

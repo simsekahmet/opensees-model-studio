@@ -269,8 +269,14 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
   function setModel(next) {
     const first = !model;
     model = next;
-    selection.clear();
-    nodeSelection.clear();
+
+    // Tags survive a rebuild by design, so the selection does too: keep every
+    // member and joint that still exists. Clearing it here is what used to make
+    // a joint move look like it had done nothing — the move landed, but the
+    // selection and its move panel went with it.
+    for (const tag of [...selection]) if (!model.elementByTag.has(tag)) selection.delete(tag);
+    for (const tag of [...nodeSelection]) if (!model.nodeByTag.has(tag)) nodeSelection.delete(tag);
+
     opts.story = Math.min(opts.story, model.grid.nz) || 1;
     rebuild();
     if (first) { applyCamera(); fit(); }
