@@ -49,11 +49,40 @@ const PANEL_OF = {
   results: 'panel-results',
 };
 
+/**
+ * The tab strip, wired to the ARIA tabs pattern.
+ *
+ * That pattern asks for two things beyond the roles already in the markup.
+ * `aria-selected` is what a screen reader reads out — without it the strip
+ * announces five tabs and never says which one you are on. And the strip is a
+ * single tab stop: Tab moves past it in one press, and the arrow keys move
+ * between the tabs, which is what makes a five-tab strip bearable to walk
+ * through on a keyboard.
+ */
 export function initTabs(onChange) {
   const tabs = [...document.querySelectorAll('.tab')];
 
-  const select = (id) => {
-    for (const t of tabs) t.classList.toggle('is-active', t.dataset.tab === id);
+  for (const t of tabs) {
+    const panel = PANEL_OF[t.dataset.tab];
+    t.id = `tab-${t.dataset.tab}`;
+    t.setAttribute('aria-controls', panel);
+    const el = document.getElementById(panel);
+    if (el) {
+      el.setAttribute('role', 'tabpanel');
+      el.setAttribute('aria-labelledby', t.id);
+    }
+  }
+
+  const select = (id, focus = false) => {
+    for (const t of tabs) {
+      const on = t.dataset.tab === id;
+      t.classList.toggle('is-active', on);
+      t.setAttribute('aria-selected', String(on));
+      // Roving tabindex: only the selected tab is a tab stop, so Tab enters
+      // the strip once and leaves it once.
+      t.tabIndex = on ? 0 : -1;
+      if (on && focus) t.focus();
+    }
     const target = PANEL_OF[id];
     for (const p of document.querySelectorAll('.panel')) {
       p.classList.toggle('is-active', p.id === target);
@@ -62,6 +91,21 @@ export function initTabs(onChange) {
   };
 
   for (const t of tabs) t.addEventListener('click', () => select(t.dataset.tab));
+
+  for (const t of tabs) {
+    t.addEventListener('keydown', (ev) => {
+      const step = { ArrowRight: 1, ArrowLeft: -1 }[ev.key];
+      let next = null;
+      if (step) next = tabs[(tabs.indexOf(t) + step + tabs.length) % tabs.length];
+      else if (ev.key === 'Home') next = tabs[0];
+      else if (ev.key === 'End') next = tabs[tabs.length - 1];
+      if (!next) return;
+      ev.preventDefault();
+      select(next.dataset.tab, true);
+    });
+  }
+
+  select(tabs.find((t) => t.classList.contains('is-active'))?.dataset.tab || tabs[0]?.dataset.tab);
   return { select };
 }
 
@@ -103,6 +147,11 @@ export function confirmDialog({ title, message, confirmLabel = 'Continue', tone 
   });
 }
 
+/** Everything a Tab press can land on inside a dialog. */
+const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+
+let modalCount = 0;
+
 /** The one modal every dialog above is a shape of. */
 function modal({ title, message, body, confirmLabel, tone, onDone, cancel = true, focus }) {
   const overlay = document.createElement('div');
@@ -114,7 +163,11 @@ function modal({ title, message, body, confirmLabel, tone, onDone, cancel = true
   box.setAttribute('aria-modal', 'true');
 
   const h = document.createElement('h3');
+  h.id = `modal-title-${++modalCount}`;
   h.textContent = title;
+  // aria-modal says the rest of the page is inert; aria-labelledby is what
+  // gives the dialog a name to be announced by.
+  box.setAttribute('aria-labelledby', h.id);
   box.append(h);
 
   if (message) {
@@ -144,6 +197,9 @@ function modal({ title, message, body, confirmLabel, tone, onDone, cancel = true
   overlay.append(box);
   document.body.append(overlay);
 
+  // Where the focus was before the dialog opened, so it can be given back.
+  const opener = document.activeElement;
+
   const first = focus ? focus() : ok;
   (first || ok).focus();
   if (first && first.select) first.select();
@@ -151,11 +207,27 @@ function modal({ title, message, body, confirmLabel, tone, onDone, cancel = true
   const close = (answer) => {
     document.removeEventListener('keydown', onKey);
     overlay.remove();
+    // A dialog that drops the focus on the floor leaves a keyboard user at the
+    // top of the document with no idea where they were.
+    if (opener && opener.isConnected && opener.focus) opener.focus();
     onDone(answer);
   };
+
   const onKey = (ev) => {
-    if (ev.key === 'Escape') { ev.preventDefault(); close(false); }
-    if (ev.key === 'Enter') { ev.preventDefault(); close(true); }
+    if (ev.key === 'Escape') { ev.preventDefault(); close(false); return; }
+    if (ev.key === 'Enter' && ev.target.tagName !== 'TEXTAREA') {
+      ev.preventDefault(); close(true); return;
+    }
+    // The focus has to stay inside a modal dialog; without this Tab walks out
+    // of it into a page the dialog has just declared inert.
+    if (ev.key !== 'Tab') return;
+    const stops = [...box.querySelectorAll(FOCUSABLE)].filter((n2) => !n2.disabled && n2.offsetParent);
+    if (!stops.length) return;
+    const edge = ev.shiftKey ? stops[0] : stops[stops.length - 1];
+    if (document.activeElement === edge || !box.contains(document.activeElement)) {
+      ev.preventDefault();
+      (ev.shiftKey ? stops[stops.length - 1] : stops[0]).focus();
+    }
   };
 
   cancelButton?.addEventListener('click', () => close(false));

@@ -29,6 +29,16 @@ const isRC    = (s) => s.matSystem === 'rc';
 const isSteel = (s) => s.matSystem === 'steel';
 const isFiber = (s) => s.sectionKind === 'Fiber';
 
+/**
+ * Which formulations actually read the uniaxial concrete and steel models.
+ *
+ * An elastic section is built from E, G and the section geometry, and an
+ * NDFiber section from a single nDMaterial. Both leave every field below
+ * untouched, so asking for them would be asking for numbers that change
+ * nothing — and the script would define three materials nothing refers to.
+ */
+const usesUniaxial = (s) => s.sectionKind === 'Fiber' || s.sectionKind === 'RCCircularSection';
+
 const usesIso      = (s) => !!s.useIsolation;
 const usesDampers  = (s) => !!s.useDampers;
 const usesFriction = (s) => usesIso(s) && !!ISOLATOR_TYPES[s.isolatorType]?.friction;
@@ -79,18 +89,19 @@ export const SCHEMA = [
         { value: 'steel', label: 'Structural steel' },
       ]},
 
-      { kind: 'sub', label: 'Concrete', showIf: isRC },
-      { id: 'concreteMat', type: 'select', label: 'Concrete model', d: 'Concrete02', showIf: isRC,
+      { kind: 'sub', label: 'Concrete', showIf: (s) => isRC(s) && usesUniaxial(s) },
+      { id: 'concreteMat', type: 'select', label: 'Concrete model', d: 'Concrete02',
+        showIf: (s) => isRC(s) && usesUniaxial(s),
         options: modelOptions(CONCRETE_MODELS) },
-      ...materialFields('conc', 'concreteMat', isRC),
+      ...materialFields('conc', 'concreteMat', (s) => isRC(s) && usesUniaxial(s)),
       { id: 'confineFactor', type: 'number', gt: 0, label: 'Core confinement factor K', step: 0.05, d: 1.30,
         showIf: (s) => isRC(s) && isFiber(s) && !!CONCRETE_MODELS[s.concreteMat]?.confine,
         hint: 'Core strength = K · f′c and core strain = 1 + 5(K − 1) times the cover value.' },
 
-      { kind: 'sub', label: 'Steel / reinforcement' },
+      { kind: 'sub', label: 'Steel / reinforcement', showIf: usesUniaxial },
       { id: 'steelMat', type: 'select', label: 'Steel model', d: 'Steel02',
-        options: modelOptions(STEEL_MODELS) },
-      ...materialFields('steel', 'steelMat', () => true),
+        showIf: usesUniaxial, options: modelOptions(STEEL_MODELS) },
+      ...materialFields('steel', 'steelMat', usesUniaxial),
 
       { kind: 'sub', label: 'General properties' },
       { id: 'Ec', type: 'number', gt: 0, label: 'Ec — concrete elastic modulus', unit: 'stress', showIf: isRC,

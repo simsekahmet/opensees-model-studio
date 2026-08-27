@@ -223,8 +223,11 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
     view: 'view3d',
     story: 1,
     frame: { axis: 'x', index: 0 },
-    nodeLabels: true,
-    elemLabels: true,
+    // Off to begin with. A tag on every joint and every member is noise until
+    // there is a reason to read one, and the reason is almost always a
+    // selection — which carries its own tag whatever these say.
+    nodeLabels: false,
+    elemLabels: false,
     localAxes: false,
     dims: false,
     grid: true,
@@ -253,7 +256,7 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
   const pointer = new THREE.Vector2();
 
   /** Labels by priority, most important first — see `declutter`. */
-  const labelSets = { axis: [], dim: [], node: [], elem: [] };
+  const labelSets = { sel: [], axis: [], dim: [], node: [], elem: [] };
   let declutterKey = '';
 
   /* ── public API ───────────────────────────────────────────────────── */
@@ -865,7 +868,8 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
     declutterKey = key;
 
     const taken = [];
-    for (const group of [labelSets.axis, labelSets.dim, labelSets.node, labelSets.elem]) {
+    for (const group of [labelSets.sel, labelSets.axis, labelSets.dim,
+                         labelSets.node, labelSets.elem]) {
       for (const el of group) {
         if (el.style.display === 'none') continue;      // outside the frustum
 
@@ -989,6 +993,57 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
 
   renderer.domElement.addEventListener('pointercancel', () => { hideBand(); drag = null; });
 
+  /**
+   * Keyboard control of the camera.
+   *
+   * The scene is the one part of this app that cannot be reached without a
+   * mouse, and orbiting is the thing you do first. The keys move the camera on
+   * the same orbit the mouse drags it along, so a keyboard user is looking at
+   * the model the same way — not at a second, lesser version of the view.
+   *
+   * The handler sits on the host rather than the canvas because the host is
+   * what takes focus, and it only claims the keys it uses.
+   */
+  host.addEventListener('keydown', (ev) => {
+    if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+
+    const ORBIT = 0.09;              // radians per press
+    const spherical = new THREE.Spherical();
+    const offset = camera.position.clone().sub(controls.target);
+
+    const orbit = (dTheta, dPhi) => {
+      spherical.setFromVector3(offset);
+      spherical.theta += dTheta;
+      // Stopped just short of the poles, where the up vector flips and the
+      // view rolls over for no reason the user asked for.
+      spherical.phi = Math.min(Math.PI - 1e-3, Math.max(1e-3, spherical.phi + dPhi));
+      camera.position.copy(controls.target).add(offset.setFromSpherical(spherical));
+      controls.update();
+    };
+
+    const zoom = (factor) => {
+      if (camera === ortho) {
+        camera.zoom = Math.max(0.02, camera.zoom * factor);
+        camera.updateProjectionMatrix();
+      } else {
+        camera.position.copy(controls.target).add(offset.multiplyScalar(1 / factor));
+      }
+      controls.update();
+    };
+
+    switch (ev.key) {
+      case 'ArrowLeft':  orbit(-ORBIT, 0); break;
+      case 'ArrowRight': orbit(ORBIT, 0); break;
+      case 'ArrowUp':    orbit(0, -ORBIT); break;
+      case 'ArrowDown':  orbit(0, ORBIT); break;
+      case '+': case '=': zoom(1.12); break;
+      case '-': case '_': zoom(1 / 1.12); break;
+      case 'Escape':     clearSelection(); break;
+      default: return;
+    }
+    ev.preventDefault();
+  });
+
   function showBand() {
     if (!band) return;
     const left = Math.min(drag.x0, drag.x1);
@@ -1109,6 +1164,7 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
 
   function drawSelection() {
     clear(gSelection);
+    labelSets.sel.length = 0;
     if (!model) return;
     const accent = new THREE.Color(themeColor('--el-select'));
 
@@ -1148,6 +1204,29 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
       mesh.instanceMatrix.needsUpdate = true;
       gSelection.add(mesh);
     }
+
+    // Whatever the label switches say, what is selected carries its tag. The
+    // point of picking something is usually to find out which one it is, and
+    // turning on every label in the model to answer that is the wrong trade.
+    // They go in `labelSets.sel`, which declutter reads first, so a selection
+    // tag is never the one hidden by a crowd.
+    if (!opts.elemLabels) {
+      for (const tag of selection) {
+        const e = drawnByTag.get(tag) || model.elementByTag.get(tag);
+        if (!e) continue;
+        labelSets.sel.push(addTag(gSelection, String(e.tag),
+          (e.p1[0] + e.p2[0]) / 2, (e.p1[1] + e.p2[1]) / 2, (e.p1[2] + e.p2[2]) / 2,
+          'tag-elem tag-sel', ANCHOR.elem));
+      }
+    }
+    if (!opts.nodeLabels) {
+      for (const n of getNodeSelection()) {
+        labelSets.sel.push(addTag(gSelection, String(n.tag), n.x, n.y, n.z,
+          'tag-node tag-sel', ANCHOR.node));
+      }
+    }
+    // The labels are new, so the placement pass has to run again for them.
+    declutterKey = '';
   }
 
   /* ── loop and resize ──────────────────────────────────────────────── */

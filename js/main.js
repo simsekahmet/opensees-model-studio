@@ -27,6 +27,7 @@ import { buildModel } from './model/builder.js';
 import { generateScript } from './codegen/openseespy.js';
 import { toNotebook } from './codegen/notebook.js';
 import { getRecord, subscribeGM, exportSeries, scriptFileName } from './model/groundmotion.js';
+import { readZip, isZip, ZipError } from './results/zip.js';
 import { createViewer } from './viewer/viewer.js';
 import { fmt, unitsOf } from './units.js';
 
@@ -88,6 +89,12 @@ el('btn-download').addEventListener('click', download);
 el('btn-download-2').addEventListener('click', download);
 el('btn-download-gm').addEventListener('click', downloadRecord);
 el('btn-download-nb').addEventListener('click', downloadNotebook);
+
+// The same three downloads again, from the menu the narrow layout shows in
+// their place. One handler each, so there is nothing to keep in step.
+el('mi-code-py').addEventListener('click', () => { closeMenus(); download(); });
+el('mi-code-nb').addEventListener('click', () => { closeMenus(); downloadNotebook(); });
+el('mi-code-gm').addEventListener('click', () => { closeMenus(); downloadRecord(); });
 
 subscribeGM(() => { markStale(); updateRecordButton(); });
 el('inspector-close').addEventListener('click', () => {
@@ -180,14 +187,32 @@ el('mi-notebook').addEventListener('click', () => { closeMenus(); downloadNotebo
 
 let results = null;
 const resultsInput = el('results-file');
+const resultsFolder = el('results-folder');
 
-resultsInput.addEventListener('change', () => {
-  const files = [...resultsInput.files];
-  resultsInput.value = '';
-  if (files.length) ingestResults(files);
-});
+for (const input of [resultsInput, resultsFolder]) {
+  input.addEventListener('change', () => {
+    const files = [...input.files];
+    input.value = '';
+    if (files.length) ingestResults(files);
+  });
+}
 
-async function ingestResults(files) {
+async function ingestResults(picked) {
+  let files = picked;
+  try {
+    // An archive is the usual way results travel off a remote machine, so one
+    // is unpacked here rather than sent back to be unpacked by hand.
+    const archives = files.filter(isZip);
+    if (archives.length) {
+      const unpacked = await Promise.all(archives.map(readZip));
+      files = [...files.filter((f) => !isZip(f)), ...unpacked.flat()];
+    }
+  } catch (err) {
+    if (!(err instanceof ZipError)) console.error(err);
+    toast('Could not open the archive', err.message, 'error', 9000);
+    return;
+  }
+
   try {
     results = await loadResults(files);
   } catch (err) {
@@ -206,6 +231,7 @@ async function ingestResults(files) {
 function paintResults() {
   renderResults(dom.resultsRoot, results, {
     onPick: () => resultsInput.click(),
+    onPickFolder: () => resultsFolder.click(),
     onFiles: ingestResults,
     onClear: () => {
       results = null;
@@ -348,6 +374,7 @@ el('mi-fit').addEventListener('click', () => { closeMenus(); viewer.fit(); });
 const MENUS = [
   { btn: el('btn-view-menu'), pop: dom.viewMenu },
   { btn: el('btn-more'), pop: el('more-menu') },
+  { btn: el('btn-code-menu'), pop: el('code-menu') },
 ];
 
 for (const menu of MENUS) {
@@ -625,6 +652,12 @@ async function compile(refreshInspector = true) {
   dom.formSummary.textContent =
     `${model.grid.nz} stories · ${model.grid.nx}×${model.grid.ny} bays · ${s.dof} DOF`;
 
+  // A canvas says nothing to a screen reader, so what it is showing is written
+  // out beside it where one can be read.
+  el('scene-a11y').textContent =
+    `Model built: ${model.grid.nz} stories, ${model.grid.nx} by ${model.grid.ny} bays, `
+    + `${s.nodes} joints, ${s.elements} members, ${s.dof} degrees of freedom.`;
+
   reportBuild(model.warnings);
 }
 
@@ -715,6 +748,12 @@ function showSelection({ mode, elements, nodes }) {
   dom.selectInfo.textContent = n === 0
     ? 'No selection'
     : `${n} ${noun}${n > 1 ? 's' : ''} selected`;
+
+  // The selection is a visual change on a canvas, so it is also said out loud.
+  el('scene-a11y').textContent = n === 0
+    ? 'Nothing selected.'
+    : `${n} ${noun}${n > 1 ? 's' : ''} selected: ${picked.slice(0, 5).map((p) => p.tag).join(', ')}`
+      + `${n > 5 ? ` and ${n - 5} more` : ''}.`;
   dom.selectInfo.classList.toggle('has-selection', n > 0);
 
   if (n === 0) { dom.inspector.hidden = true; movePanel = null; return; }
@@ -914,7 +953,9 @@ function downloadRecord() {
 }
 
 function updateRecordButton() {
-  el('btn-download-gm').hidden = !getRecord();
+  const has = !!getRecord();
+  el('btn-download-gm').hidden = !has;
+  el('mi-code-gm').hidden = !has;
 }
 
 async function copyScript() {

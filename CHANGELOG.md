@@ -4,6 +4,59 @@ All notable changes to OpenSees Model Studio are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [semantic versioning](https://semver.org/).
 
+## [1.7.0] — 2026-08-27
+
+### Changed
+
+- **An elastic section no longer drags a concrete model behind it.** With the
+  default `Elastic` formulation the sidebar still asked for a concrete model, a
+  steel model and every parameter of both, and the script still wrote
+  `uniaxialMaterial('Concrete02', …)` and `Steel02` — three materials no section
+  ever referred to. The same was true of `NDFiber`, which is built from a single
+  `nDMaterial`. Both are gone from the form and from the script, which now says
+  in two lines what it is built from instead. **77 of the 108 variants** shed
+  those definitions; equilibrium, periods, base shear and the isolation check
+  come back to the digit they were at, because the materials were never read.
+
+- **Node and element labels start off.** A tag on every joint and every member
+  is noise until there is a reason to read one, and the reason is almost always
+  a selection — so a selected joint or member now carries its own tag whatever
+  the switches say, drawn in the selection colour and placed first, so it is
+  never the label a crowd hides. The switches themselves are unchanged.
+
+### Added
+
+- **A folder picker and .zip support for results.** The card took a dropped
+  folder or a hand-picked set of files; it now also takes `Choose folder…`, and
+  a `.zip` — dropped or picked — is unpacked in the page. The reader is written
+  against the format on top of the browser's own `DecompressionStream`, so the
+  app keeps its one dependency. Measured on a real output folder: deflated
+  1.9 MB in 65 ms, stored in 11 ms, and an archive with a trailing comment in
+  58 ms — all three yielding the same nine files and the same 8 424 256
+  characters. Encrypted and ZIP64 archives are refused by name.
+
+- **The keyboard reaches the whole app.** The tab strip follows the ARIA tabs
+  pattern — `aria-selected`, `aria-controls`, `role="tabpanel"`, one tab stop
+  for the strip with the arrow keys, Home and End moving inside it. Dialogs
+  carry `aria-labelledby`, hold the focus inside while they are open, and give
+  it back to whatever opened them. The 3D view takes focus and answers the arrow
+  keys by orbiting, `+` and `-` by zooming and Escape by clearing the selection,
+  and a live region beside it says what the canvas is showing and what has just
+  been selected.
+
+### Fixed
+
+- **The Python toolbar no longer pushes the page sideways on a phone.** The
+  three download buttons measured 464 px inside a 390 px header, and the strip
+  they sit in does not wrap, so the document scrolled 88 px to the right. Below
+  640 px they fold into one `Download ▾` menu; the strip measures 147 px and the
+  document does not scroll. On a wide screen nothing changes.
+
+- **`hidden` was not hiding.** The browser hides `[hidden]` with a rule that any
+  author rule outranks, so `.btn { display: flex }` was quietly overriding it and
+  the `Download record .txt` button stood on screen with no record loaded. The
+  attribute is given the last word once, for the whole app.
+
 ## [1.6.0] — 2026-08-27
 
 ### Fixed

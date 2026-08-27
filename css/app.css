@@ -2,6 +2,28 @@
    app.css — application shell, forms, viewport, tables and code panel
    ========================================================================== */
 
+/* The browser hides `[hidden]` with a `display: none` that any author rule
+   beats, so `.btn { display: flex }` was quietly overriding it — the
+   "Download record .txt" button stayed on screen with no record loaded. Every
+   element in this app that carries `hidden` is meant to be gone, so the
+   attribute is given the last word here rather than in each rule that happens
+   to set a display. */
+[hidden] { display: none !important; }
+
+/* Text for a screen reader that has no business taking up room on screen. */
+.visually-hidden {
+  position: absolute;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* The scene takes focus, so it has to be able to show that it has it. */
+#scene-canvas:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
 /* ============================== Top bar ================================= */
 
 .topbar {
@@ -341,6 +363,9 @@ html[data-theme="light"] .icon-moon { display: none; }
 .file-row { display: flex; align-items: center; gap: 8px; }
 .file-input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .file-row .btn { cursor: pointer; }
+/* The record picker is a real input behind its label, so it still takes focus.
+   The input itself is invisible, so the label wears the focus ring for it. */
+.file-input:focus-visible + .btn { outline: 2px solid var(--accent); outline-offset: 2px; }
 .file-summary {
   margin-top: 6px;
   font-size: 10.5px;
@@ -551,6 +576,12 @@ html[data-theme="light"] .icon-moon { display: none; }
   background: color-mix(in srgb, var(--bg-1) 86%, transparent);
   color: var(--el-column); border-color: var(--line-soft);
 }
+/* The tag of whatever is selected, shown even when the label switches are off. */
+.tag-sel {
+  color: var(--el-select);
+  border-color: var(--el-select);
+  opacity: 1;
+}
 .tag-dim  { background: transparent; color: var(--el-dim); font-weight: 500; }
 .tag-axis { background: transparent; font: 700 12px/1 var(--mono); }
 .tag-axis.ax-x { color: var(--axis-x); }
@@ -729,7 +760,8 @@ table.tbl tbody tr:hover td { background: var(--bg-2); color: var(--text-1); }
   font-size: 11.5px; color: var(--text-3);
   flex: none;
 }
-.code-actions { display: flex; gap: 7px; }
+.code-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+.code-actions .narrow-menu { display: none; }
 
 .code-block {
   flex: 1; min-height: 0; overflow: auto; margin: 0;
@@ -956,6 +988,10 @@ table.tbl tbody tr:hover td { background: var(--bg-2); color: var(--text-1); }
   .card-grid { grid-template-columns: minmax(0, 1fr); }
   .sec-fig { gap: 12px; }
   .code-head { flex-wrap: wrap; gap: 8px; }
+  /* Three full download labels cannot fit a phone-width row, and the row does
+     not wrap, so they fold into one menu instead of pushing the page sideways. */
+  .code-actions .wide-inline { display: none; }
+  .code-actions .narrow-menu { display: block; }
   .toaster { left: 10px; right: 10px; }
   .toast { max-width: none; }
 }

@@ -90,11 +90,16 @@
     </button>
   </div>
 
-  <input type="file" id="import-file" accept=".json,application/json" class="file-input" />
-  <input type="file" id="load-file" class="file-input"
+  <input type="file" id="import-file" accept=".json,application/json" class="file-input"
+         tabindex="-1" aria-hidden="true" />
+  <!-- Opened by the buttons that name them; the inputs themselves are not a
+       stop on the way through the page. -->
+  <input type="file" id="load-file" class="file-input" tabindex="-1" aria-hidden="true"
          accept=".py,.ipynb,.json,text/x-python,application/json" />
-  <input type="file" id="results-file" class="file-input" multiple
-         accept=".out,.txt,.json,application/json,text/plain" />
+  <input type="file" id="results-file" class="file-input" multiple tabindex="-1" aria-hidden="true"
+         accept=".out,.txt,.json,.zip,application/json,application/zip,text/plain" />
+  <input type="file" id="results-folder" class="file-input" multiple tabindex="-1" aria-hidden="true"
+         webkitdirectory directory />
 </header>
 
 <main class="workspace">
@@ -157,8 +162,8 @@
           </button>
           <div class="menu-pop" id="view-menu" hidden>
             <p class="menu-head">Show in view</p>
-            <label class="menu-item"><input type="checkbox" id="tg-nodes" checked><span>Node labels</span></label>
-            <label class="menu-item"><input type="checkbox" id="tg-elements" checked><span>Element labels</span></label>
+            <label class="menu-item"><input type="checkbox" id="tg-nodes"><span>Node labels</span></label>
+            <label class="menu-item"><input type="checkbox" id="tg-elements"><span>Element labels</span></label>
             <label class="menu-item"><input type="checkbox" id="tg-local"><span>Local axes</span></label>
             <label class="menu-item"><input type="checkbox" id="tg-dims"><span>Dimensions</span></label>
             <label class="menu-item"><input type="checkbox" id="tg-grid" checked><span>Grid</span></label>
@@ -191,7 +196,13 @@
       </div>
 
       <div class="scene-host" id="scene-host">
-        <div id="scene-canvas"></div>
+        <!-- The scene is its own control: focus it and the arrow keys orbit,
+             + and - zoom. The live region below carries what a screen reader
+             cannot read off a canvas. -->
+        <div id="scene-canvas" role="application" tabindex="0"
+             aria-label="3D model view. Arrow keys orbit, plus and minus zoom."
+             aria-describedby="scene-a11y"></div>
+        <p id="scene-a11y" class="visually-hidden" aria-live="polite"></p>
         <div id="scene-labels" class="label-layer"></div>
         <div class="rubber-band" id="rubber-band" hidden></div>
         <div class="scene-empty" id="scene-empty">
@@ -234,9 +245,21 @@
         <span id="code-meta">Build the model to generate the script.</span>
         <div class="code-actions">
           <button class="btn btn-ghost btn-sm" id="btn-copy">Copy</button>
-          <button class="btn btn-ghost btn-sm" id="btn-download-gm" hidden>Download record .txt</button>
-          <button class="btn btn-ghost btn-sm" id="btn-download-2">Download Python File</button>
-          <button class="btn btn-ghost btn-sm" id="btn-download-nb">Download .ipynb</button>
+          <button class="btn btn-ghost btn-sm wide-inline" id="btn-download-gm" hidden>Download record .txt</button>
+          <button class="btn btn-ghost btn-sm wide-inline" id="btn-download-2">Download Python File</button>
+          <button class="btn btn-ghost btn-sm wide-inline" id="btn-download-nb">Download .ipynb</button>
+
+          <!-- The same three downloads, folded into one control where the row
+               is too narrow to hold them side by side. -->
+          <div class="menu-wrap narrow-menu">
+            <button class="btn btn-ghost btn-sm" id="btn-code-menu" aria-expanded="false"
+                    aria-haspopup="menu" aria-controls="code-menu">Download ▾</button>
+            <div class="menu-pop menu-right" id="code-menu" role="menu" hidden>
+              <button class="menu-action" role="menuitem" id="mi-code-py">Python file (.py)</button>
+              <button class="menu-action" role="menuitem" id="mi-code-nb">Notebook (.ipynb)</button>
+              <button class="menu-action" role="menuitem" id="mi-code-gm" hidden>Ground motion (.txt)</button>
+            </div>
+          </div>
         </div>
       </div>
       <pre class="code-block"><code id="code-out">#  The generated OpenSeesPy script will appear here.</code></pre>

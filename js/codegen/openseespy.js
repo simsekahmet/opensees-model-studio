@@ -1806,7 +1806,28 @@ function emitSectionConsts(w, prefix, sec, u, fiber) {
 
 /* ──────────────────────────── materials ─────────────────────────────── */
 
+/** The formulations that actually read the uniaxial materials below. */
+const USES_UNIAXIAL = ['Fiber', 'RCCircularSection'];
+
 function emitMaterials(w, s, fiber, steelSystem) {
+  // An elastic section is built from E, G and the section geometry; an NDFiber
+  // section is built from one nDMaterial, defined with the sections. Neither
+  // reads a uniaxial material, so defining them here would put three materials
+  // in the script that nothing ever refers to — and leave the reader of the
+  // script looking for the place a concrete model influences the answer.
+  if (!USES_UNIAXIAL.includes(s.sectionKind)) {
+    w(
+      s.sectionKind === 'NDFiber'
+        ? '# The fiber sections in this model are built from a single nDMaterial, which is'
+        : '# The sections in this model are elastic: they are built from E, G and the',
+      s.sectionKind === 'NDFiber'
+        ? '# defined with the sections below. No uniaxial material is read, so none is defined.'
+        : '# section geometry alone. No uniaxial material is read, so none is defined.',
+      ''
+    );
+    return;
+  }
+
   if (!steelSystem) {
     const type = s.concreteMat;
     const def = CONCRETE_MODELS[type];

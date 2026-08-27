@@ -87,12 +87,20 @@ function dropZone(results, handlers) {
     title.textContent = 'Load an analysis';
     const detail = document.createElement('span');
     detail.textContent = 'Run the generated script, then drop its output folder here — '
-      + 'or pick the files, including manifest.json.';
+      + 'or a .zip of it, or pick the folder below.';
     body.append(title, detail);
   }
 
   const actions = document.createElement('div');
   actions.className = 'res-drop-actions';
+
+  // The folder is what the script writes, so it leads; picking files one by
+  // one is still there for the case where only some of them are wanted.
+  const folder = document.createElement('button');
+  folder.className = 'btn btn-ghost btn-sm';
+  folder.textContent = 'Choose folder…';
+  folder.addEventListener('click', () => handlers.onPickFolder?.());
+  actions.append(folder);
 
   const pick = document.createElement('button');
   pick.className = 'btn btn-ghost btn-sm';
