@@ -4,6 +4,20 @@ All notable changes to OpenSees Model Studio are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [semantic versioning](https://semver.org/).
 
+## [1.5.4] — 2026-08-27
+
+### Fixed
+
+- **A move too small to see now says so before it is made.** The move boxes are
+  in the model's own length unit, and in a millimetre model a distance meant in
+  metres is a thousand times too small: it lands, correctly, and nothing visible
+  happens — which is indistinguishable from a dead button. Typing a distance
+  under 0.4 % of the model's largest dimension now draws a caution naming both
+  the fraction and the unit, so `5` in a 18 000 mm model reads *5 mm is 0.03 %
+  of the model — the move will land, but it is too small to see. These boxes are
+  in mm.* The move is still allowed: 5 mm is a legitimate thing to ask for.
+- **The confirmation of a move now carries its unit**, for the same reason.
+
 ## [1.5.3] — 2026-08-27
 
 ### Changed

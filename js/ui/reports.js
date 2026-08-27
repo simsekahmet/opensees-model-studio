@@ -623,7 +623,7 @@ function sep() {
  * element that touches one of them follows, because element ends are read
  * from the node coordinates.
  */
-export function renderNodeSelection(panel, titleEl, bodyEl, nodes, s, { onMove, onReset, draft, onDraft }) {
+export function renderNodeSelection(panel, titleEl, bodyEl, nodes, s, { onMove, onReset, draft, onDraft, extent = 0 }) {
   const u = unitsOf(s.unitSystem);
   titleEl.textContent = nodes.length === 1
     ? `Joint ${nodes[0].tag}`
@@ -704,10 +704,32 @@ export function renderNodeSelection(panel, titleEl, bodyEl, nodes, s, { onMove, 
   hint.className = 'move-hint';
 
   const GUIDE = 'Applied in global axes. Attached members follow the joint.';
-  /** One line under the boxes: the standing guidance, or what just went wrong. */
-  const say = (problem) => {
-    hint.textContent = problem || GUIDE;
-    hint.dataset.tone = problem ? 'error' : 'muted';
+
+  /**
+   * One line under the boxes: the standing guidance, a caution, or what just
+   * went wrong.
+   *
+   * The caution is there because these boxes are in the model's own length
+   * unit, and in millimetres a distance meant in metres is a thousand times too
+   * small — it lands, and nothing visibly happens, which reads as a dead
+   * button. So a move too small to see on screen says so before it is made.
+   */
+  const say = (problem, tone = 'error') => {
+    if (problem) {
+      hint.textContent = problem;
+      hint.dataset.tone = tone;
+      return;
+    }
+    const size = Math.max(...read().map(Math.abs));
+    if (size > 0 && extent > 0 && size < extent * 0.004) {
+      const share = (size / extent) * 100;
+      hint.textContent = `${fmt(size, 4)} ${u.length} is ${share.toFixed(share < 0.01 ? 4 : 2)}% of the `
+        + `model — the move will land, but it is too small to see. These boxes are in ${u.length}.`;
+      hint.dataset.tone = 'warn';
+      return;
+    }
+    hint.textContent = GUIDE;
+    hint.dataset.tone = 'muted';
   };
   say();
 

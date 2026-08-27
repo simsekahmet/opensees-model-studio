@@ -627,6 +627,7 @@ html[data-theme="light"] .icon-moon { display: none; }
 .move-actions .btn:disabled { opacity: .45; cursor: default; }
 .move-hint { margin-top: 8px; font-size: 10.5px; color: var(--text-3); line-height: 1.4; }
 .move-hint[data-tone="error"] { color: var(--danger); font-weight: 550; }
+.move-hint[data-tone="warn"] { color: var(--warn); font-weight: 550; }
 
 /* ============================ Document panels =========================== */
 

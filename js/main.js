@@ -728,6 +728,7 @@ function showSelection({ mode, elements, nodes }) {
       onReset: (tags) => { clearNodeOffsets(tags); recompileKeepingJoints(tags); },
       draft: moveDraft,
       onDraft: (d) => { moveDraft = d; },
+      extent: modelExtent(),
     });
     return;
   }
@@ -736,6 +737,13 @@ function showSelection({ mode, elements, nodes }) {
   const handlers = { onEdit: applyMemberEdit, onResetEdit: resetMemberEdit };
   if (n === 1) renderInspector(dom.inspector, dom.inspectorTitle, dom.inspectorBody, elements[0], state, handlers);
   else renderSelectionSummary(dom.inspector, dom.inspectorTitle, dom.inspectorBody, elements, state, handlers);
+}
+
+/** The model's largest overall dimension, for judging whether a move will show. */
+function modelExtent() {
+  if (!model) return 0;
+  const { min, max } = model.bounds;
+  return Math.max(max[0] - min[0], max[1] - min[1], max[2] - min[2]);
 }
 
 /** Applies edited dimensions or slab load, then rebuilds keeping the selection. */
@@ -762,8 +770,12 @@ async function recompileKeepingMembers(tags) {
 function applyMove(tags, delta) {
   moveNodes(tags, delta);
   recompileKeepingJoints(tags);
+  // The unit belongs in the message: these are the model's own length units,
+  // and a move meant in metres typed into a millimetre model is the one way
+  // this operation can look like it did nothing.
+  const unit = unitsOf(state.unitSystem).length;
   toast('Joints moved',
-    `${tags.length} joint${tags.length > 1 ? 's' : ''} by (${delta.join(', ')}) — attached members followed.`,
+    `${tags.length} joint${tags.length > 1 ? 's' : ''} by (${delta.join(', ')}) ${unit} — attached members followed.`,
     'ok');
 }
 
