@@ -293,6 +293,62 @@ export function buildModel(s) {
   const elementByTag = new Map(elements.map((e) => [e.tag, e]));
 
   /* ── slab loads onto the beams ──────────────────────────────────────── */
+
+  // Panel sizes and tributary areas are read from the joints as they actually
+  // sit, so a joint moved by hand carries the floor it really covers rather
+  // than the floor the grid drew. With nothing moved the two agree by
+  // definition, and the nominal spans are used unchanged so that no model
+  // without hand-moved joints can come out a hair different.
+  const geometryDriven = movedTags.length > 0;
+
+  const jointAt = (level, i, j) => nodeByTag.get(nodeTag(level, i, j));
+
+  const spanBetween = (level, i0, j0, i1, j1) => {
+    const a = jointAt(level, i0, j0);
+    const b = jointAt(level, i1, j1);
+    return a && b ? Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z) : 0;
+  };
+
+  /**
+   * Plan area of a panel from its four corners, by the shoelace formula. A
+   * floor load is defined per unit of plan area, so this is what it acts on
+   * however the corners have been dragged about.
+   */
+  const panelArea = (level, i, j) => {
+    const c = [jointAt(level, i, j), jointAt(level, i + 1, j),
+      jointAt(level, i + 1, j + 1), jointAt(level, i, j + 1)];
+    if (c.some((p) => !p)) return 0;
+    let twice = 0;
+    for (let k = 0; k < 4; k++) {
+      const p = c[k], r = c[(k + 1) % 4];
+      twice += p.x * r.y - r.x * p.y;
+    }
+    return Math.abs(twice) / 2;
+  };
+
+  /** A panel is a quadrilateral once a corner moves, so each side is averaged. */
+  const panelDims = (level, i, j) => (geometryDriven
+    ? {
+      Lx: (spanBetween(level, i, j, i + 1, j) + spanBetween(level, i, j + 1, i + 1, j + 1)) / 2,
+      Ly: (spanBetween(level, i, j, i, j + 1) + spanBetween(level, i + 1, j, i + 1, j + 1)) / 2,
+    }
+    : { Lx: spansX[i], Ly: spansY[j] });
+
+  /**
+   * A quarter of each adjoining panel — the classical rule, applied to the
+   * panels as they actually are. On a rectangular grid it collapses back to
+   * the product of the half spans, and summed over a level it is exactly the
+   * plan area of that floor, so no mass is invented or lost.
+   */
+  const tributaryAt = (level, i, j) => {
+    if (!geometryDriven) return tributaryArea(spansX, spansY, i, j);
+    let a = 0;
+    for (const [pi, pj] of [[i - 1, j - 1], [i, j - 1], [i - 1, j], [i, j]]) {
+      if (pi < 0 || pj < 0 || pi >= nx || pj >= ny) continue;
+      a += panelArea(level, pi, pj);
+    }
+    return a / 4;
+  };
   const dlF = numOr(s.dlFactor, 1);
   const llF = numOr(s.llFactor, 1);
 
@@ -302,8 +358,23 @@ export function buildModel(s) {
 
     for (let j = 0; j < ny; j++) {
       for (let i = 0; i < nx; i++) {
-        const Lx = spansX[i], Ly = spansY[j];
-        const { wX, wY } = panelShare(q, Lx, Ly, s.loadDistribution);
+        const { Lx, Ly } = panelDims(level, i, j);
+        const share = panelShare(q, Lx, Ly, s.loadDistribution);
+        let { wX, wY } = share;
+
+        if (geometryDriven) {
+          // panelShare lays exactly q·Lx·Ly onto a rectangle. A panel with a
+          // moved corner is not one, and its beams are not Lx and Ly long, so
+          // the four shares are scaled back onto the load the floor really
+          // carries: q times its true plan area.
+          const spread = wX * (spanBetween(level, i, j, i + 1, j)
+              + spanBetween(level, i, j + 1, i + 1, j + 1))
+            + wY * (spanBetween(level, i, j, i, j + 1)
+              + spanBetween(level, i + 1, j, i + 1, j + 1));
+          const k = spread > 0 ? (q * panelArea(level, i, j)) / spread : 0;
+          wX *= k;
+          wY *= k;
+        }
 
         // The two X-beams bounding this panel (at y = j and y = j+1).
         addLoad(elementByTag, TAG_BEAM_X, level, beamXIndex(nx, i, j), wX);
@@ -351,7 +422,8 @@ export function buildModel(s) {
     const qMass = numOr(s.deadFloor, 0) + lam * numOr(s.liveFloor, 0);
     for (const n of nodes) {
       if (n.level === 0) continue;
-      const area = tributaryArea(spansX, spansY, n.i, n.j);
+      // A foundation joint carries what the column base above it carries.
+      const area = tributaryAt(n.foundation ? 0 : n.level, n.i, n.j);
       n.mass = (qMass * area) / g;
       totalMass += n.mass;
       storyMass[n.level] += n.mass;
@@ -501,8 +573,9 @@ export function buildModel(s) {
   }
   if (movedTags.length) {
     warn(`${movedTags.length} joint${movedTags.length > 1 ? 's have' : ' has'} been moved off the grid. `
-      + 'Member lengths follow the moved joints, but slab loads and tributary masses are still '
-      + 'computed from the nominal bay spacing.');
+      + 'Member lengths, slab loads and tributary masses are all read from where the joints '
+      + 'actually sit, so the floor totals move with them. The moves are stored against joint '
+      + 'tags, which are renumbered when the bay or story count changes.');
   }
   if (isolated && ISOLATOR_TYPES[s.isolatorType]?.partialDOF) {
     critical(`${s.isolatorType} carries shear only — it supplies no vertical or torsional `

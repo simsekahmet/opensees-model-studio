@@ -348,6 +348,48 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
     controls.update();
   }
 
+  /**
+   * Brings moved joints into sight without taking the view away.
+   *
+   * A joint move is meant to be watched, so the camera holds still and the
+   * joint travels across the screen where the eye can follow it. It only
+   * intervenes when the move carried the joint out of the frame, and then it
+   * pans: the zoom and the angle the user set are carried over untouched, so
+   * nothing about the view is thrown away except the part that went missing.
+   */
+  function revealNodes(tags) {
+    if (!model || !tags || !tags.length) return;
+
+    const pts = [];
+    for (const tag of tags) {
+      const n = model.nodeByTag.get(tag);
+      if (n) pts.push(new THREE.Vector3(n.x, n.y, n.z));
+    }
+    if (!pts.length) return;
+
+    camera.updateMatrixWorld();
+
+    // A joint pressed against the edge of the canvas is as good as lost, so
+    // the frame is treated as a little smaller than it really is.
+    const EDGE = 0.82;
+    const inFrame = (p) => {
+      const ndc = p.clone().project(camera);
+      return Math.abs(ndc.x) <= EDGE && Math.abs(ndc.y) <= EDGE && ndc.z > -1 && ndc.z < 1;
+    };
+    if (pts.every(inFrame)) return;
+
+    const centre = pts
+      .reduce((a, p) => a.add(p), new THREE.Vector3())
+      .divideScalar(pts.length);
+
+    // Keeping the camera-to-target vector is what preserves both the zoom and
+    // the viewing angle; only where the pair is aimed changes.
+    const offset = camera.position.clone().sub(controls.target);
+    controls.target.copy(centre);
+    camera.position.copy(centre).add(offset);
+    controls.update();
+  }
+
   function clearSelection() {
     selection.clear();
     nodeSelection.clear();
@@ -1150,7 +1192,7 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
   tick();
 
   return {
-    setModel, setOptions, setResults, fit, refreshTheme,
+    setModel, setOptions, setResults, fit, revealNodes, refreshTheme,
     clearSelection, getSelection, setSelection, getNodeSelection, setNodeSelection,
     dispose,
   };

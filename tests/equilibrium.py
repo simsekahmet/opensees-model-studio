@@ -33,6 +33,18 @@ CASES = [
     ("recorders", "fixed base"),
     ("isolator-elastomericBearingPlasticity", "base isolated"),
     ("isolation-partial", "partially isolated"),
+    # A joint moved off the grid: the panel is no longer a rectangle, so the
+    # slab load and the tributary masses are worked out from the joints as they
+    # actually sit. The builder and the emitted script each do that arithmetic
+    # on their own, and this is where the two are made to agree.
+    #
+    # The move here is in plan. A joint moved vertically tilts the members that
+    # reach it, and a '-beamUniform' load on a tilted member acts along its own
+    # axes, so the vertical resultant is the load times the cosine of the tilt
+    # rather than the load itself. That is how OpenSees applies element loads,
+    # not an error in the model, but it puts a case like that a few parts in
+    # ten thousand off a statics check and there is nothing to learn from it.
+    ("moved-column-line", "moved column line"),
 ]
 
 

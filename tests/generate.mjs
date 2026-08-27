@@ -121,6 +121,11 @@ add('no-gravity', { runGravity: false });
 
 /* ── overrides: moved joints and edited members ──────────────────────── */
 add('moved-joints', { nodeOffsets: { 20001: [0.4, 0, 0], 20002: [0, 0.3, -0.1] } });
+// A whole column line shifted in plan, base included, so every column stays
+// plumb and every beam stays level. The panels it touches are no longer
+// rectangles, which is the arithmetic under test, and nothing tilts — so the
+// statics check can hold this one to full tolerance.
+add('moved-column-line', { nodeOffsets: { 10001: [0.4, 0, 0], 20001: [0.4, 0, 0], 30001: [0.4, 0, 0] } });
 add('edited-members', { elementOverrides: { 101001: { b: 0.5, h: 0.7 }, 201001: { h: 0.65, w: 12 } } });
 add('moved-and-edited', {
   nodeOffsets: { 20001: [0.25, 0, 0] },

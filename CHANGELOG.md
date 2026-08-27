@@ -4,6 +4,54 @@ All notable changes to OpenSees Model Studio are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [semantic versioning](https://semver.org/).
 
+## [1.5.3] — 2026-08-27
+
+### Changed
+
+- **Slab loads and tributary masses are read from the joints as they actually
+  sit.** Until now a moved joint carried the members with it but the floor it
+  supported was still worked out from the nominal bay spacing, which is what the
+  off-grid warning had been apologising for. Panel sizes now come from the four
+  corners, and the load is scaled onto the panel's true plan area by the
+  shoelace formula, so a corner dragged three metres out really does put the
+  extra floor on the beams around it. Tributary mass follows the classical rule
+  — a quarter of each adjoining panel — measured on those same panels, so a
+  level's masses still sum to exactly the plan area it covers. On a grid with
+  nothing moved the two agree by definition and the nominal spans are used
+  unchanged: **103 of the 105 existing variants regenerate byte for byte**, and
+  the only two that change are the two that already had moved joints. The
+  generated script does the same arithmetic, and a new `moved-column-line`
+  variant holds the two to each other in the statics check — **0.000001 %**.
+
+### Added
+
+- **`Clear all joint moves`, on the warning that reports them.** Joint moves are
+  stored against joint tags, and a joint tag carries the bay count inside it, so
+  changing the number of bays renumbers them; until now the only way to drop a
+  move was to find and select the joint that carried it. The warning now offers
+  to drop all of them at once, and Ctrl+Z brings them back.
+
+### Fixed
+
+- **`Apply move` no longer does nothing in silence.** With all three boxes at
+  zero the button returned without a word, which reads exactly like a broken
+  button — and since the boxes were reset to zero after every move, the second
+  press of a repeated nudge always landed in that case. What is typed now
+  survives the rebuild the move triggers, so the same step can be applied again
+  and again, and a genuinely empty move says why it did nothing.
+- **The move panel was rebuilt three times per move**, once by the rebuild and
+  twice by the calls putting the selection back. It is rebuilt once.
+
+- **A joint move is now watched instead of re-framed.** 1.5.2 answered "the move
+  is invisible" by framing the whole model again on every move, which was the
+  wrong cure: re-framing rescales everything at once, so the one thing that
+  actually moved is the hardest thing to see, and it threw away the zoom and the
+  angle the user had set. The camera now holds still, and the joint — drawn on
+  top in the selection colour — is seen travelling to where it was sent. A move
+  that carries the joint out of the frame is the only exception: `revealNodes`
+  pans across to it at exactly the same distance and viewing angle, so the zoom
+  survives the move.
+
 ## [1.5.2] — 2026-08-26
 
 ### Fixed

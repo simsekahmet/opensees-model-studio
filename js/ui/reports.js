@@ -254,7 +254,7 @@ function add(svg, tag, attrs) {
 
 /* ═══════════════════════════════ Model data ═════════════════════════ */
 
-export function renderData(root, s, model) {
+export function renderData(root, s, model, { onClearMoves } = {}) {
   root.textContent = '';
   if (!model) return empty(root, 'Build the model to see its node, element and story tables.');
 
@@ -309,6 +309,18 @@ export function renderData(root, s, model) {
       ul.append(li);
     }
     card.append(ul);
+
+    // Joint moves are stored against joint tags, which are renumbered when the
+    // bay or story count changes, so there has to be a way to drop them all
+    // without hunting down and selecting every joint that carries one.
+    if (onClearMoves && model.nodes.some((node) => node.moved)) {
+      const act = document.createElement('button');
+      act.className = 'btn btn-ghost btn-sm warn-action';
+      act.textContent = 'Clear all joint moves';
+      act.addEventListener('click', onClearMoves);
+      card.append(act);
+    }
+
     root.append(card);
   }
 
@@ -611,7 +623,7 @@ function sep() {
  * element that touches one of them follows, because element ends are read
  * from the node coordinates.
  */
-export function renderNodeSelection(panel, titleEl, bodyEl, nodes, s, { onMove, onReset }) {
+export function renderNodeSelection(panel, titleEl, bodyEl, nodes, s, { onMove, onReset, draft, onDraft }) {
   const u = unitsOf(s.unitSystem);
   titleEl.textContent = nodes.length === 1
     ? `Joint ${nodes[0].tag}`
@@ -663,7 +675,10 @@ export function renderNodeSelection(panel, titleEl, bodyEl, nodes, s, { onMove, 
   const row = document.createElement('div');
   row.className = 'move-row';
   const inputs = {};
-  for (const axis of ['dx', 'dy', 'dz']) {
+  // A rebuild redraws this panel, so the boxes are seeded from the draft the
+  // caller is holding: what was typed survives the move it just triggered.
+  const seed = Array.isArray(draft) ? draft : [0, 0, 0];
+  for (const [k, axis] of ['dx', 'dy', 'dz'].entries()) {
     const cell = document.createElement('label');
     cell.className = 'move-cell';
     const lab = document.createElement('span');
@@ -672,7 +687,7 @@ export function renderNodeSelection(panel, titleEl, bodyEl, nodes, s, { onMove, 
     inp.type = 'number';
     inp.className = 'input';
     inp.step = 'any';
-    inp.value = '0';
+    inp.value = String(seed[k] ?? 0);
     inp.autocomplete = 'off';
     inputs[axis] = inp;
     cell.append(lab, inp);
@@ -685,6 +700,21 @@ export function renderNodeSelection(panel, titleEl, bodyEl, nodes, s, { onMove, 
     return Number.isFinite(v) ? v : 0;
   });
 
+  const hint = document.createElement('p');
+  hint.className = 'move-hint';
+
+  const GUIDE = 'Applied in global axes. Attached members follow the joint.';
+  /** One line under the boxes: the standing guidance, or what just went wrong. */
+  const say = (problem) => {
+    hint.textContent = problem || GUIDE;
+    hint.dataset.tone = problem ? 'error' : 'muted';
+  };
+  say();
+
+  for (const inp of Object.values(inputs)) {
+    inp.addEventListener('input', () => { onDraft?.(read()); say(); });
+  }
+
   const actions = document.createElement('div');
   actions.className = 'move-actions';
 
@@ -693,7 +723,14 @@ export function renderNodeSelection(panel, titleEl, bodyEl, nodes, s, { onMove, 
   apply.textContent = 'Apply move';
   apply.addEventListener('click', () => {
     const d = read();
-    if (d.every((v) => v === 0)) return;
+    // A button that answers with nothing reads as a broken button, so the one
+    // case where the move is a no-op says why.
+    if (d.every((v) => v === 0)) {
+      say('Enter a distance first — all three boxes are zero.');
+      inputs.dx.focus();
+      return;
+    }
+    say();
     onMove(nodes.map((n) => n.tag), d);
   });
 
@@ -706,9 +743,6 @@ export function renderNodeSelection(panel, titleEl, bodyEl, nodes, s, { onMove, 
   actions.append(apply, reset);
   box.append(actions);
 
-  const hint = document.createElement('p');
-  hint.className = 'move-hint';
-  hint.textContent = 'Applied in global axes. Attached members follow the joint.';
   box.append(hint);
 
   bodyEl.append(box);

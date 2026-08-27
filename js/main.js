@@ -59,6 +59,13 @@ let model = null;
 let script = '';
 let movePanel = null;   // handle to the joint move controls, when they are up
 
+// What is typed into the move boxes, held outside the panel so that the
+// rebuild a move triggers cannot wipe it. Cleared when a different set of
+// joints is selected, because an offset meant for one joint means nothing
+// for the next.
+let moveDraft = [0, 0, 0];
+let moveDraftFor = '';
+
 /* ─────────────────────────────── boot ───────────────────────────────── */
 
 initTheme(el('btn-theme'), () => {
@@ -75,7 +82,7 @@ const viewer = createViewer(dom.sceneCanvas, dom.sceneLabels, {
 
 renderForm(dom.formRoot, markStale);
 
-el('btn-compile').addEventListener('click', compile);
+el('btn-compile').addEventListener('click', () => compile());
 el('btn-copy').addEventListener('click', copyScript);
 el('btn-download').addEventListener('click', download);
 el('btn-download-2').addEventListener('click', download);
@@ -558,7 +565,14 @@ async function confirmGridChange() {
   return true;
 }
 
-async function compile() {
+/**
+ * Builds the model and refreshes everything that hangs off it.
+ *
+ * `refreshInspector` is false for the rebuilds that already know which
+ * selection they are putting back: the inspector is redrawn once by whoever
+ * restores the selection, rather than three times on the way there.
+ */
+async function compile(refreshInspector = true) {
   await confirmGridChange();
 
   // Invalid input never reaches the builder: the sidebar already marks each
@@ -595,11 +609,13 @@ async function compile() {
   dom.sceneEmpty.classList.add('is-hidden');
 
   viewer.setModel(model);
-  showSelection({
-    mode: viewer.getNodeSelection().length ? 'node' : 'element',
-    elements: viewer.getSelection(),
-    nodes: viewer.getNodeSelection(),
-  });
+  if (refreshInspector) {
+    showSelection({
+      mode: viewer.getNodeSelection().length ? 'node' : 'element',
+      elements: viewer.getSelection(),
+      nodes: viewer.getNodeSelection(),
+    });
+  }
 
   populatePickers();
   refreshPanels();
@@ -672,7 +688,18 @@ function refreshPanels() {
     + `${state.sectionKind} sections · ${state.unitSystem}`;
 
   renderSections(dom.sectionsRoot, state, model);
-  renderData(dom.dataRoot, state, model);
+  renderData(dom.dataRoot, state, model, { onClearMoves: clearAllJointMoves });
+}
+
+/** Drops every hand-moved joint at once, from the warning that reports them. */
+function clearAllJointMoves() {
+  const moved = model ? model.nodes.filter((n) => n.moved).length : 0;
+  clearNodeOffsets();
+  moveDraft = [0, 0, 0];
+  compile();
+  toast('Joint moves cleared',
+    `${moved} joint${moved > 1 ? 's are' : ' is'} back on the parametric grid — Ctrl+Z brings the moves back.`,
+    'ok');
 }
 
 function markStale() {
@@ -693,9 +720,14 @@ function showSelection({ mode, elements, nodes }) {
   if (n === 0) { dom.inspector.hidden = true; movePanel = null; return; }
 
   if (mode === 'node') {
+    const key = nodes.map((n) => n.tag).sort((a, b) => a - b).join(',');
+    if (key !== moveDraftFor) { moveDraftFor = key; moveDraft = [0, 0, 0]; }
+
     movePanel = renderNodeSelection(dom.inspector, dom.inspectorTitle, dom.inspectorBody, nodes, state, {
       onMove: applyMove,
       onReset: (tags) => { clearNodeOffsets(tags); recompileKeepingJoints(tags); },
+      draft: moveDraft,
+      onDraft: (d) => { moveDraft = d; },
     });
     return;
   }
@@ -722,9 +754,8 @@ function resetMemberEdit(tags) {
 }
 
 async function recompileKeepingMembers(tags) {
-  await compile();
-  viewer.setSelection(tags);
-  showSelection({ mode: 'element', elements: viewer.getSelection(), nodes: [] });
+  await compile(false);
+  viewer.setSelection(tags);   // emits the selection, which redraws the panel
 }
 
 /** Moves the selected joints, then rebuilds with them still selected. */
@@ -740,16 +771,17 @@ function applyMove(tags, delta) {
  * Rebuilds after a joint move and puts the joints back on screen.
  *
  * A rebuild deliberately keeps the camera — nobody wants the view thrown away
- * because a bay width changed. A joint move is the exception: the whole point
- * of it is to see the joint somewhere else, and before the camera was preserved
- * it was the re-framing that made the move obvious. So this one operation, and
- * only this one, frames the model again.
+ * because a bay width changed, and re-framing the whole model on every move is
+ * worse still: everything rescales at once, which is exactly what hides the
+ * one thing that actually moved. So the camera holds still and the joint is
+ * seen travelling to where it was sent, highlighted the whole way. The only
+ * exception is a move that carries the joint out of the frame, which
+ * `revealNodes` answers by panning across at the same zoom and angle.
  */
 async function recompileKeepingJoints(tags) {
-  await compile();
-  viewer.setNodeSelection(tags);
-  viewer.fit();
-  showSelection({ mode: 'node', elements: [], nodes: viewer.getNodeSelection() });
+  await compile(false);
+  viewer.setNodeSelection(tags);   // emits the selection, which redraws the panel
+  viewer.revealNodes(tags);
 }
 
 /* ──────────────────────────── view controls ─────────────────────────── */

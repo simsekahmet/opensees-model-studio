@@ -304,6 +304,9 @@ export function generateScript(s, model, gm = null) {
   rule('3 — Model space, nodes and restraints');
   const moves = Object.entries(s.nodeOffsets || {})
     .filter(([, d]) => d && (d[0] || d[1] || d[2]));
+  // A move only counts once it lands on a joint this grid actually has: an
+  // offset left over from an older bay count must not change what is emitted.
+  const anyMoved = model.nodes.some((n) => n.moved);
 
   w(
     'ops.wipe()',
@@ -326,6 +329,54 @@ export function generateScript(s, model, gm = null) {
       '    return x + dx, y + dy, z + dz',
       '',
       '',
+      ...(anyMoved ? [
+        'def joint_xyz(level, i, j):',
+        '    """Where a grid joint actually sits, its move included."""',
+        '    return moved(node_tag(level, i, j), X[i], Y[j], Z[level])',
+        '',
+        '',
+        'def span_between(level, i0, j0, i1, j1):',
+        '    """Distance between two grid joints as built, not as drawn."""',
+        '    a = joint_xyz(level, i0, j0)',
+        '    b = joint_xyz(level, i1, j1)',
+        '    return ((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2 + (b[2] - a[2]) ** 2) ** 0.5',
+        '',
+        '',
+        'def panel_dims(level, i, j):',
+        '    """A panel is a quadrilateral once a corner moves, so each side is averaged."""',
+        '    lx = (span_between(level, i, j, i + 1, j)',
+        '          + span_between(level, i, j + 1, i + 1, j + 1)) / 2.0',
+        '    ly = (span_between(level, i, j, i, j + 1)',
+        '          + span_between(level, i + 1, j, i + 1, j + 1)) / 2.0',
+        '    return lx, ly',
+        '',
+        '',
+        'def panel_area(level, i, j):',
+        '    """Plan area of a panel by the shoelace formula: what a floor load acts on."""',
+        '    c = [joint_xyz(level, i, j), joint_xyz(level, i + 1, j),',
+        '         joint_xyz(level, i + 1, j + 1), joint_xyz(level, i, j + 1)]',
+        '    twice = 0.0',
+        '    for k in range(4):',
+        '        p, r = c[k], c[(k + 1) % 4]',
+        '        twice += p[0] * r[1] - r[0] * p[1]',
+        '    return abs(twice) / 2.0',
+        '',
+        '',
+        'def panel_load(level, i, j, q):',
+        '    """The four beam shares, scaled onto the load the panel really carries."""',
+        '    lx, ly = panel_dims(level, i, j)',
+        '    w_x, w_y = panel_share(q, lx, ly)',
+        '    spread = (w_x * (span_between(level, i, j, i + 1, j)',
+        '                     + span_between(level, i, j + 1, i + 1, j + 1))',
+        '              + w_y * (span_between(level, i, j, i, j + 1)',
+        '                       + span_between(level, i + 1, j, i + 1, j + 1)))',
+        '    if spread <= 0.0:',
+        '        return 0.0, 0.0',
+        '    k = q * panel_area(level, i, j) / spread',
+        '    return w_x * k, w_y * k',
+        '',
+        '',
+      ] : []),
       'for level in range(N_Z + 1):',
       '    for j in range(NY_N):',
       '        for i in range(NX_N):',
@@ -626,7 +677,11 @@ export function generateScript(s, model, gm = null) {
     '    q = Q_SLAB',
     '    for j in range(N_Y):',
     '        for i in range(N_X):',
-    '            w_x, w_y = panel_share(q, BAY_X[i], BAY_Y[j])',
+    ...(anyMoved ? [
+      '            w_x, w_y = panel_load(level, i, j, q)',
+    ] : [
+      '            w_x, w_y = panel_share(q, BAY_X[i], BAY_Y[j])',
+    ]),
     '            add_load(beam_x_tag(level, i, j), w_x)',
     '            add_load(beam_x_tag(level, i, j + 1), w_x)',
     '            add_load(beam_y_tag(level, i, j), w_y)',
@@ -669,11 +724,21 @@ export function generateScript(s, model, gm = null) {
   if (s.massSource === 'nodal') {
     rule(`${needInt ? 10 : 9} — Lumped nodal mass`);
     w(
-      'def tributary_area(i, j):',
-      '    """A quarter of each adjoining panel."""',
-      '    dx = (BAY_X[i - 1] if i > 0 else 0.0) / 2.0 + (BAY_X[i] if i < N_X else 0.0) / 2.0',
-      '    dy = (BAY_Y[j - 1] if j > 0 else 0.0) / 2.0 + (BAY_Y[j] if j < N_Y else 0.0) / 2.0',
-      '    return dx * dy',
+      ...(anyMoved ? [
+        'def tributary_area(level, i, j):',
+        '    """A quarter of each adjoining panel, on the panels as they actually are."""',
+        '    a = 0.0',
+        '    for pi, pj in ((i - 1, j - 1), (i, j - 1), (i - 1, j), (i, j)):',
+        '        if 0 <= pi < N_X and 0 <= pj < N_Y:',
+        '            a += panel_area(level, pi, pj)',
+        '    return a / 4.0',
+      ] : [
+        'def tributary_area(i, j):',
+        '    """A quarter of each adjoining panel."""',
+        '    dx = (BAY_X[i - 1] if i > 0 else 0.0) / 2.0 + (BAY_X[i] if i < N_X else 0.0) / 2.0',
+        '    dy = (BAY_Y[j - 1] if j > 0 else 0.0) / 2.0 + (BAY_Y[j] if j < N_Y else 0.0) / 2.0',
+        '    return dx * dy',
+      ]),
       '',
       '',
       ...(s.useSlabs && s.slabMassSource === 'shell' ? [
@@ -690,7 +755,9 @@ export function generateScript(s, model, gm = null) {
       'for level in range(1, N_Z + 1):',
       '    for j in range(NY_N):',
       '        for i in range(NX_N):',
-      '            m = q * tributary_area(i, j) / G_ACC',
+      anyMoved
+        ? '            m = q * tributary_area(level, i, j) / G_ACC'
+        : '            m = q * tributary_area(i, j) / G_ACC',
       '            ops.mass(node_tag(level, i, j), m, m, m, 0.0, 0.0, 0.0)',
       ''
     );
