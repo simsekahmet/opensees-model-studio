@@ -736,9 +736,19 @@ function applyMove(tags, delta) {
     'ok');
 }
 
+/**
+ * Rebuilds after a joint move and puts the joints back on screen.
+ *
+ * A rebuild deliberately keeps the camera — nobody wants the view thrown away
+ * because a bay width changed. A joint move is the exception: the whole point
+ * of it is to see the joint somewhere else, and before the camera was preserved
+ * it was the re-framing that made the move obvious. So this one operation, and
+ * only this one, frames the model again.
+ */
 async function recompileKeepingJoints(tags) {
   await compile();
   viewer.setNodeSelection(tags);
+  viewer.fit();
   showSelection({ mode: 'node', elements: [], nodes: viewer.getNodeSelection() });
 }
 

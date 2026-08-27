@@ -4,6 +4,16 @@ All notable changes to OpenSees Model Studio are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [semantic versioning](https://semver.org/).
 
+## [1.5.2] — 2026-08-26
+
+### Fixed
+
+- **A joint move no longer leaves the camera where it was.** Since 1.2.0 a
+  rebuild deliberately keeps the view, which is right for a change of bay width
+  and wrong for a joint move: re-framing was what made the move visible in the
+  first place. That one operation frames the model again; every other rebuild
+  still leaves the camera alone.
+
 ## [1.5.1] — 2026-08-26
 
 ### Fixed
