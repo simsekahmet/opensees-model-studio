@@ -774,9 +774,20 @@ export function generateScript(s, model, gm = null) {
   emitSolutionStrategy(w, s);
   if (s.runGravity) emitGravity(w, s);
   if (s.runModal) emitModal(w, s);
-  if (s.runPushover) emitLateral(w, s, model, 'push', false);
-  if (s.runCyclic) emitLateral(w, s, model, 'cyc', true);
-  if (s.runTimeHistory) emitTimeHistory(w, s, model, gm);
+
+  // Every case below runs on the one domain this script builds, so each has to
+  // be handed the model in the state gravity left it. A cyclic run started on
+  // the back of a pushover would otherwise begin from a displaced — and, with
+  // inelastic materials, damaged — model, and from the pushover's load pattern
+  // as well, which a displacement-controlled step goes on scaling.
+  const laid = [];                       // load patterns already in the domain
+  const isolate = () => { if (laid.length) w(`reset_to_gravity(${laid.join(', ')})`, ''); };
+  if ([s.runPushover, s.runCyclic, s.runTimeHistory].filter(Boolean).length > 1) {
+    emitStateReset(w, s);
+  }
+  if (s.runPushover) { emitLateral(w, s, model, 'push', false); laid.push(3); }
+  if (s.runCyclic) { isolate(); emitLateral(w, s, model, 'cyc', true); laid.push(4); }
+  if (s.runTimeHistory) { isolate(); emitTimeHistory(w, s, model, gm); laid.push(5); }
 
   if (s.useRecorders) {
     w(
@@ -1398,6 +1409,47 @@ function emitSolutionStrategy(w, s) {
     `    ${systemCall}`,
     `    ops.test(${py(s.testCmd)}, TOL, MAX_ITER, 0)`,
     `    ops.algorithm(${py(s.algorithmCmd)})`,
+    '',
+    ''
+  );
+}
+
+/**
+ * The helper that hands the next analysis case a clean model.
+ *
+ * `ops.reset()` takes every node and every material back to the state it was
+ * built in, which is the only way to be sure nothing of the previous case
+ * survives — not the displacement, not the plastic strain, not the stiffness
+ * damage left behind. The gravity pattern is load-constant, so it is still
+ * applied at full value afterwards; one static step finds the equilibrium that
+ * belongs to it.
+ */
+function emitStateReset(w, s) {
+  w(
+    '# ── Between analyses ─────────────────────────────────────────────────',
+    '# Every analysis in this script shares one OpenSees domain, so each case',
+    '# has to be handed the model in the state gravity left it. Without this a',
+    '# cyclic run started after a pushover begins from the displaced — and, with',
+    '# inelastic materials, damaged — model the pushover left behind, and from',
+    '# its load pattern too, which a displacement-controlled step goes on',
+    '# scaling alongside its own.',
+    'def reset_to_gravity(*patterns):',
+    '    for tag in patterns:',
+    "        ops.remove('loadPattern', tag)",
+    '    ops.setTime(0.0)',
+    '    ops.wipeAnalysis()',
+    '    ops.reset()                       # every node and material back to start',
+    ...(s.runGravity ? [
+      '',
+      '    # Gravity is load-constant, so it is still fully applied; this step',
+      '    # only has to find the equilibrium that belongs to it again.',
+      '    set_solver()',
+      "    ops.integrator('LoadControl', 0.0)",
+      "    ops.analysis('Static')",
+      '    if ops.analyze(1) != 0:',
+      "        raise RuntimeError('The gravity state could not be restored between analyses.')",
+      "    ops.loadConst('-time', 0.0)",
+    ] : []),
     '',
     ''
   );

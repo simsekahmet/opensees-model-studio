@@ -16,7 +16,8 @@ import { fmt } from '../units.js';
 import { heading, table, wrapTable } from './reports.js';
 import { xyChart, storyChart } from './charts.js';
 import {
-  DIRECTIONS, storyDisplacements, storyDrifts, storyShears, baseShear, envelope,
+  DIRECTIONS, storyDisplacements, storyDrifts, storyDriftsMax, storyTorsion,
+  storyShears, baseShear, envelope,
   capacityCurve, convergence, nodeTrace, roofNode,
 } from '../results/derive.js';
 
@@ -362,6 +363,26 @@ const pct = (list, i) => (Array.isArray(list) && Number.isFinite(list[i]) ? list
 
 function storySection(root, results) {
   const drifts = DIRECTIONS.map((d) => ({ ...d, data: envelope(storyDrifts(results, d.dof)) }));
+  // The average is the floor's translation; the largest single joint is what a
+  // drift limit is actually checked against, and the ratio between them is what
+  // says whether the floor is twisting.
+  const worst = DIRECTIONS.map((d) => ({ ...d, data: envelope(storyDriftsMax(results, d.dof)) }));
+  const torsion = DIRECTIONS.map((d) => ({ ...d, data: envelope(storyTorsion(results, d.dof)) }));
+
+  // A ratio is only worth printing for a direction the building actually
+  // answered in. A frame pushed along X twists a little, and that twist shows
+  // up along Y as a drift of a few parts in a million with a lively-looking
+  // ratio on top of it — a true number about nothing. So a direction carrying
+  // less than a hundredth of the largest joint drift in the model keeps its
+  // drifts, which are real, and drops its ηbi, which is not worth reading.
+  const largestDrift = Math.max(
+    0, ...worst.flatMap((d) => (d.data || []).map((story) => story.peak))
+  );
+  for (const d of torsion) {
+    const partner = worst.find((w) => w.key === d.key);
+    const answered = (partner?.data || []).some((story) => story.peak >= largestDrift * 0.01);
+    if (!answered) d.data = null;
+  }
   const shears = DIRECTIONS.map((d) => ({ ...d, data: storyShears(results, d.dof) }));
   const disps = DIRECTIONS.map((d) => ({ ...d, data: envelope(storyDisplacements(results, d.dof)) }));
 
@@ -372,19 +393,44 @@ function storySection(root, results) {
   const grid = document.createElement('div');
   grid.className = 'chart-grid';
 
-  const driftSets = drifts
-    .filter((d) => d.data && d.data.length)
-    .map((d) => ({ name: `Drift ${d.label}`, values: d.data.map((s) => ({ level: s.level, value: s.peak })) }));
+  const asSet = (entry, name) => ({
+    name,
+    values: entry.data.map((story) => ({ level: story.level, value: story.peak })),
+  });
+
+  const driftSets = [
+    ...drifts.filter((d) => d.data && d.data.length).map((d) => asSet(d, `Mean ${d.label}`)),
+    ...worst.filter((d) => d.data && d.data.length).map((d) => asSet(d, `Max joint ${d.label}`)),
+  ];
 
   grid.append(storyChart(driftSets, {
     title: 'Story drift ratio',
     xTitle: 'Drift ratio',
-    note: 'Largest relative displacement across each story over the whole analysis, divided by '
-      + 'the story height.',
+    note: 'Mean is the floor average — its rigid-body translation when the diaphragm is rigid. '
+      + 'Max joint is the largest drift any single joint of that story sees, which is what a '
+      + 'drift limit has to be met at. Both are peaks over the whole analysis.',
     limit: 0.02,
     limitLabel: '2 %',
     emptyText: 'No displacement record was found.',
   }));
+
+  const torsionSets = torsion
+    .filter((d) => d.data && d.data.length)
+    .map((d) => asSet(d, `ηbi ${d.label}`));
+
+  if (torsionSets.some((set) => set.values.some((v) => v.value > 0))) {
+    grid.append(storyChart(torsionSets, {
+      title: 'Torsional irregularity ηbi',
+      xTitle: 'ηbi = Δmax / Δmean',
+      note: 'The largest story drift over a floor divided by the average of them, as TBDY 2018 '
+        + '§3.6.2.2 and ASCE 7-22 §12.8.4.3 define it. Above 1.2 the floor is torsionally '
+        + 'irregular. Read only where the story is actually drifting — at a zero crossing the '
+        + 'ratio is noise.',
+      limit: 1.2,
+      limitLabel: '1.2',
+      emptyText: 'No displacement record was found.',
+    }));
+  }
 
   const shearSets = shears
     .filter((d) => d.data && d.data.length)
@@ -408,10 +454,10 @@ function storySection(root, results) {
   }));
 
   root.append(grid);
-  root.append(storyTable(results, drifts, shears, disps));
+  root.append(storyTable(results, drifts, worst, torsion, shears, disps));
 }
 
-function storyTable(results, drifts, shears, disps) {
+function storyTable(results, drifts, worst, torsion, shears, disps) {
   const levels = new Map();
   const put = (list, key) => {
     for (const entry of list) {
@@ -423,6 +469,8 @@ function storyTable(results, drifts, shears, disps) {
     }
   };
   put(drifts, 'drift');
+  put(worst, 'worst');
+  put(torsion, 'eta');
   put(shears, 'shear');
   put(disps, 'disp');
 
@@ -433,6 +481,8 @@ function storyTable(results, drifts, shears, disps) {
       fmt(r.z, 3),
       value(r.dispX), value(r.dispY),
       value(r.driftX), value(r.driftY),
+      value(r.worstX), value(r.worstY),
+      eta(r.etaX), eta(r.etaY),
       value(r.shearX), value(r.shearY),
     ]);
 
@@ -440,13 +490,18 @@ function storyTable(results, drifts, shears, disps) {
   return wrapTable(table(
     ['Story', `z [${u.length || ''}]`,
      `ux [${u.length || ''}]`, `uy [${u.length || ''}]`,
-     'Drift X', 'Drift Y',
+     'Mean drift X', 'Mean drift Y',
+     'Max joint X', 'Max joint Y',
+     'ηbi X', 'ηbi Y',
      `Vx [${u.force || ''}]`, `Vy [${u.force || ''}]`],
     rows, 0
   ));
 }
 
 const value = (v) => (Number.isFinite(v) ? fmt(v, 4) : '—');
+
+/** ηbi reads as a plain ratio, and the 1.2 the codes draw the line at is marked. */
+const eta = (v) => (Number.isFinite(v) && v > 0 ? `${fmt(v, 3)}${v > 1.2 ? ' ⚠' : ''}` : '—');
 
 /* ──────────────────── capacity and hysteresis curves ────────────────── */
 

@@ -14,6 +14,10 @@ const REACTION = 'reactions.out';
 const GLOBAL_ENVELOPE = 'element_envelope.out';
 const LOCAL_ENVELOPE = 'element_local_envelope.out';
 
+/** Node tags step by this much per level, which is what pairs a joint with the
+ *  one directly beneath it. It matches `nodeTag` in the model builder. */
+const LEVEL_STRIDE = 10000;
+
 /**
  * `EnvelopeElement` writes three rows and no time column: the minimum, the
  * maximum, and the largest magnitude with its sign dropped. The signed extreme
@@ -87,6 +91,137 @@ export function storyDrifts(results, dof) {
     out.push({ level: upper.level, z: upper.z, height, values });
   }
   return out;
+}
+
+/**
+ * Story drift joint by joint, per step.
+ *
+ * `storyDrifts` above works on the average displacement of a floor, which is
+ * the floor's rigid-body translation when the diaphragm is rigid and a fair
+ * summary when it is not. It is not the whole story: a floor that twists has a
+ * corner drifting further than the average, and averaging is exactly what hides
+ * it. So each joint is paired with the joint directly beneath it and the drift
+ * is worked out across that pair, which leaves the spread across the floor
+ * visible.
+ *
+ * A node tag carries its level in its leading digits, so the joint one level
+ * down is exactly 10000 less — and it is only used when that joint is really
+ * there, which keeps a floor that does not sit over the one below it out of
+ * the reckoning rather than pairing it with nothing.
+ */
+function pairedNodeDrifts(results, dof) {
+  if (!results.has(DISP)) return null;
+
+  const steps = results.steps(DISP);
+  const rows = results.series[DISP].rows;
+  const stories = results.stories;
+  const out = [];
+
+  for (let k = 1; k < stories.length; k++) {
+    const upper = stories[k];
+    const lower = stories[k - 1];
+    const height = upper.height || (upper.z - lower.z);
+    if (!(height > 0)) continue;
+
+    const below = new Set(lower.nodes);
+    const pairs = [];
+    for (const tag of upper.nodes) {
+      const under = tag - LEVEL_STRIDE;
+      if (!below.has(under)) continue;
+      const a = results.nodeColumn(DISP, tag, dof);
+      const b = results.nodeColumn(DISP, under, dof);
+      if (a >= 0 && b >= 0) pairs.push([a, b]);
+    }
+    if (!pairs.length) continue;
+
+    const mean = new Float64Array(steps);
+    const max = new Float64Array(steps);
+    const min = new Float64Array(steps);
+    for (let step = 0; step < steps; step++) {
+      const row = rows[step];
+      let total = 0;
+      let hi = -Infinity;
+      let lo = Infinity;
+      for (const [a, b] of pairs) {
+        const d = (row[a] - row[b]) / height;
+        total += d;
+        if (d > hi) hi = d;
+        if (d < lo) lo = d;
+      }
+      mean[step] = total / pairs.length;
+      max[step] = hi;
+      min[step] = lo;
+    }
+    out.push({ level: upper.level, z: upper.z, height, joints: pairs.length, mean, max, min });
+  }
+  return out.length ? out : null;
+}
+
+/**
+ * The largest drift any single joint of a story sees, per step, carrying its
+ * sign. This is the one a drift limit has to be checked against: the average
+ * can sit comfortably inside the limit while a corner is well past it.
+ */
+export function storyDriftsMax(results, dof) {
+  const drifts = pairedNodeDrifts(results, dof);
+  if (!drifts) return null;
+
+  return drifts.map((story) => {
+    const values = new Float64Array(story.mean.length);
+    for (let s = 0; s < values.length; s++) {
+      values[s] = Math.abs(story.max[s]) >= Math.abs(story.min[s]) ? story.max[s] : story.min[s];
+    }
+    return { level: story.level, z: story.z, height: story.height, joints: story.joints, values };
+  });
+}
+
+/**
+ * Torsional irregularity coefficient, per story and per step:
+ *
+ *     ηbi = (Δi)max / (Δi)ort
+ *
+ * the largest story drift over a floor divided by the average of them, which is
+ * how TBDY 2018 §3.6.2.2 and ASCE 7-22 §12.8.4.3 both define it. Above 1.2 the
+ * floor is torsionally irregular and the code has more to say about it.
+ *
+ * The ratio only means something while the floor is actually translating, and
+ * two things can take that away. Within a history, a zero crossing leaves two
+ * numbers on their way to zero whose quotient is noise, so the ratio is read
+ * only where the average drift is at least a tenth of its own peak. Across a
+ * whole direction, a frame pushed along X answers along Y with nothing but
+ * round-off — an average drift of 1e-22 against a joint drift of 1e-6 — and
+ * dividing one by the other gives 1e16 and means nothing at all. So a story
+ * whose average drift never reaches a twentieth of its largest joint drift is
+ * left out entirely: it is not translating, and there is no translation to
+ * measure the twist against. That also puts a ceiling of about 20 on what can
+ * be reported, which is far above the 1.2 the codes draw their line at and far
+ * above anything a building would be built to.
+ */
+export function storyTorsion(results, dof) {
+  const drifts = pairedNodeDrifts(results, dof);
+  if (!drifts) return null;
+
+  return drifts.map((story) => {
+    const values = new Float64Array(story.mean.length);
+
+    let peakMean = 0;
+    let peakJoint = 0;
+    for (let s = 0; s < values.length; s++) {
+      peakMean = Math.max(peakMean, Math.abs(story.mean[s]));
+      peakJoint = Math.max(peakJoint, Math.abs(story.max[s]), Math.abs(story.min[s]));
+    }
+
+    const translating = peakMean > 0 && peakMean >= peakJoint * 0.05;
+    if (translating) {
+      const floor = peakMean * 0.1;
+      for (let s = 0; s < values.length; s++) {
+        const mean = Math.abs(story.mean[s]);
+        if (!(mean > floor)) continue;
+        values[s] = Math.max(Math.abs(story.max[s]), Math.abs(story.min[s])) / mean;
+      }
+    }
+    return { level: story.level, z: story.z, height: story.height, joints: story.joints, values };
+  });
 }
 
 /**

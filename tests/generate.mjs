@@ -115,6 +115,10 @@ add('slab-and-isolation', { useSlabs: true, useIsolation: true, useRecorders: tr
 add('modal', { runModal: true });
 add('pushover', { runPushover: true });
 add('cyclic', { runCyclic: true });
+// Two lateral cases on one domain. Nothing of the pushover may reach the
+// cyclic run — not the displacement it ended on, not its load pattern — so
+// this is the variant that exercises reset_to_gravity against real openseespy.
+add('pushover-then-cyclic', { runPushover: true, runCyclic: true });
 add('recorders', { useRecorders: true });
 add('diaphragm', { rigidDiaphragm: true });
 add('no-gravity', { runGravity: false });

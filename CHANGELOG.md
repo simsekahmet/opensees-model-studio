@@ -4,6 +4,55 @@ All notable changes to OpenSees Model Studio are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [semantic versioning](https://semver.org/).
 
+## [1.6.0] — 2026-08-27
+
+### Fixed
+
+- **One analysis no longer inherits another's state.** Every case a generated
+  script runs shares a single OpenSees domain, and nothing reset it between
+  them: a cyclic run started after a pushover began from the displaced — and,
+  with inelastic materials, damaged — model the pushover left behind, and from
+  its load pattern too, which a displacement-controlled step goes on scaling
+  alongside its own. The curve that came out was wrong from its first record
+  and looked entirely plausible. Measured on a two-storey frame: the pushover
+  ended at `0.128000 m` and the cyclic run's first record was `0.127440 m`,
+  against `0.000080 m` for the same cyclic analysis on its own.
+
+  A `reset_to_gravity()` helper now removes the previous lateral pattern, takes
+  every node and material back to its initial state with `ops.reset()`, and
+  finds the equilibrium the load-constant gravity belongs to again. The cyclic
+  curve after a pushover is now identical to the cyclic curve on its own to
+  **1.0e-16 of its peak** — double-precision round-off, over all 6000 records.
+  A script that runs only one lateral case is emitted exactly as before.
+
+### Added
+
+- **Three story drift readings instead of one.** The drift was the average
+  horizontal displacement of a floor, which is its rigid-body translation when
+  the diaphragm is rigid and the thing that hides a twisting floor when it is
+  not. Alongside it now sit the **largest drift any single joint of the story
+  sees** — each joint paired with the joint directly beneath it, which is what a
+  drift limit actually has to be met at — and the **torsional irregularity
+  coefficient ηbi = Δmax / Δmean**, as TBDY 2018 §3.6.2.2 and ASCE 7-22
+  §12.8.4.3 define it, flagged above 1.2. On a frame stiffened along one edge
+  and pushed across it: mean drift `0.996 %`, largest joint `1.704 %`,
+  **ηbi = 1.713** — a torsional irregularity that the average alone reported as
+  a comfortable 1 %.
+
+  ηbi is reported only where it means something: not at a zero crossing, where
+  it is two numbers on their way to zero, and not for a direction the building
+  barely answered in, where a drift of a few parts in a million carries a
+  lively-looking ratio about nothing.
+
+- **`tests/isolation.py`**, which runs the cyclic analysis on its own and again
+  after a pushover and requires the two curves to agree. It fails on the code
+  before this release with exactly the numbers above, and is now part of
+  `npm test`.
+- **A `pushover-then-cyclic` variant**, so two lateral cases on one domain are
+  exercised against real openseespy.
+- **Drift assertions in `results_check.mjs`**: no joint may drift less than the
+  floor average, and ηbi has to match the two drifts it is derived from.
+
 ## [1.5.5] — 2026-08-27
 
 ### Fixed

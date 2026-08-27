@@ -76,6 +76,32 @@ if (drifts) {
     drifts.map((d) => d.peak.toFixed(4)).join(', '));
 }
 
+/* The average hides the corner, so the two are derived apart and each is held
+   to what it means: no joint can drift less than the average of all of them,
+   and the ratio between the largest and the average is what the codes call the
+   torsional irregularity coefficient. */
+const worst = derive.envelope(derive.storyDriftsMax(results, 1));
+check('the largest joint drift is derived', !!worst && worst.length === drifts?.length,
+  worst ? `${worst.length} stories, ${worst[0].joints} joints paired per story` : 'none');
+if (worst && drifts) {
+  check('no joint drifts less than the floor average',
+    worst.every((w, k) => w.peak >= drifts[k].peak * (1 - 1e-9)),
+    worst.map((w, k) => (w.peak / drifts[k].peak).toFixed(4)).join(', '));
+}
+
+const torsion = derive.envelope(derive.storyTorsion(results, 1));
+check('the torsional irregularity coefficient is derived', !!torsion);
+if (torsion && worst && drifts) {
+  // A symmetric frame pushed along an axis of symmetry sits just above 1.
+  check('eta_bi is at least 1 wherever it is reported',
+    torsion.every((t) => t.peak === 0 || t.peak >= 1 - 1e-9),
+    torsion.map((t) => t.peak.toFixed(4)).join(', '));
+  check('eta_bi matches the drifts it comes from',
+    torsion.every((t, k) => t.peak === 0
+      || Math.abs(t.peak - worst[k].peak / drifts[k].peak) < 0.05),
+    torsion.map((t, k) => `${t.peak.toFixed(4)} vs ${(worst[k].peak / drifts[k].peak).toFixed(4)}`).join(', '));
+}
+
 const shears = derive.storyShears(results, 1);
 check('story shears are derived', !!shears && shears.length > 0);
 if (shears) {
