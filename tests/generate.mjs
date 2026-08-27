@@ -127,6 +127,16 @@ add('moved-joints', { nodeOffsets: { 20001: [0.4, 0, 0], 20002: [0, 0.3, -0.1] }
 // statics check can hold this one to full tolerance.
 add('moved-column-line', { nodeOffsets: { 10001: [0.4, 0, 0], 20001: [0.4, 0, 0], 30001: [0.4, 0, 0] } });
 add('edited-members', { elementOverrides: { 101001: { b: 0.5, h: 0.7 }, 201001: { h: 0.65, w: 12 } } });
+// Members set on an insertion point other than the centroid: the joints stay
+// put and each member is carried off its line by a rigid end offset, so this
+// covers the '-jntOffset' transformations and the tags that point at them.
+add('insertion-points', {
+  elementOverrides: {
+    100001: { insertion: 'middleRight' },
+    101001: { insertion: 'middleRight' },
+    201001: { insertion: 'topCentre' },
+  },
+});
 add('moved-and-edited', {
   nodeOffsets: { 20001: [0.25, 0, 0] },
   elementOverrides: { 101001: { b: 0.45 } },

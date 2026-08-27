@@ -1268,9 +1268,19 @@ export function createViewer(host, labelHost, { onSelect, band } = {}) {
    */
   function displacedModel() {
     const field = deformationField();
+
     // An insertion point carries the member off its joint line; the joints stay
     // where they are, so only the member's own ends move.
-    const offset = model.elements.some((e) => e.offset && Math.hypot(...e.offset) > 1e-9);
+    //
+    // That displacement belongs to the solid, not to the line. The frame view
+    // is the analytical model — the joint line has to run unbroken from the
+    // base to the roof, because that is where the joints are and that is what
+    // `-jntOffset` leaves standing. Drawing the line off the joints instead
+    // breaks a column into disconnected segments and says something about the
+    // model that is not true. So the offset is applied to the extruded view
+    // alone, where it is the section that leans onto its face.
+    const offset = opts.display === 'extruded'
+      && model.elements.some((e) => e.offset && Math.hypot(...e.offset) > 1e-9);
     if (!field && !offset) return model;
 
     const nodes = field

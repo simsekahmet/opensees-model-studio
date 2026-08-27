@@ -4,6 +4,26 @@ All notable changes to OpenSees Model Studio are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [semantic versioning](https://semver.org/).
 
+## [1.5.5] — 2026-08-27
+
+### Fixed
+
+- **An insertion point no longer breaks the joint line in the frame view.** The
+  offset was applied to both views, so a column line set on its right-hand face
+  was drawn as a stack of segments standing beside its own joints — which is not
+  what the model says. `-jntOffset` leaves the joints exactly where they are and
+  carries only the section off the line, so that is now what is drawn: the frame
+  view runs unbroken from the base to the roof along the joint line, and the
+  extruded view alone leans onto the face. Measured on a three-storey column
+  line set to `middleRight`: frame `x = 0.000` through all three lifts, extruded
+  `x = −0.250` through all three, against a joint line at `x = 0`.
+
+### Added
+
+- **An `insertion-points` variant** in the generation suite. Insertion points
+  had no coverage at all, so the `-jntOffset` transformations and the element
+  tags that point at them were never exercised against a real `openseespy`.
+
 ## [1.5.4] — 2026-08-27
 
 ### Fixed
