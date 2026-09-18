@@ -4,6 +4,16 @@ All notable changes to OpenSees Model Studio are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [semantic versioning](https://semver.org/).
 
+## [1.8.1] — 2026-09-18
+
+### Removed
+
+- **The guided tour.** Everything it touched is gone with it: `js/ui/tour.js`,
+  the two ways in, its styles, and the `snapshotState` / `restoreState` pair in
+  the store that existed only to let it borrow the app and hand it back. Outside
+  the version stamp, the only thing left over from 1.8.0 is the
+  responsible-engineer notice, which stays as it is.
+
 ## [1.8.0] — 2026-09-18
 
 ### Added
