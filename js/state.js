@@ -221,6 +221,27 @@ export function clearAdded(ids = null) {
   emit({ id: 'addedElements' });
 }
 
+/**
+ * A copy of the whole store, and the way back to it.
+ *
+ * The guided tour drives the real app — it builds a model, moves a joint,
+ * resizes a member — and none of that may cost the visitor the model they were
+ * working on. So the store is copied whole on the way in and written back on
+ * the way out, without going through the history, which would otherwise fill
+ * with a dozen steps nobody took.
+ */
+export function snapshotState() {
+  return JSON.parse(JSON.stringify(state));
+}
+
+export function restoreState(snap) {
+  if (!isPlainObject(snap)) return;
+  for (const key of Object.keys(state)) delete state[key];
+  Object.assign(state, snap);
+  persist();
+  emit({ id: '*', restored: true });
+}
+
 /** Everything the user placed by hand, rather than through the grid. */
 export function manualEdits(s = state) {
   return {

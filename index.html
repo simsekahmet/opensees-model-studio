@@ -73,6 +73,7 @@
         <button class="menu-action" id="mi-download">Download Python File</button>
         <button class="menu-action" id="mi-notebook">Download .ipynb</button>
         <div class="menu-sep"></div>
+        <button class="menu-action" id="mi-tour">Take the tour</button>
         <button class="menu-action" id="mi-shortcuts">Keyboard shortcuts</button>
         <div class="menu-sep"></div>
         <button class="menu-action is-danger" id="mi-reset">Reset all inputs…</button>
@@ -120,7 +121,7 @@
       <div class="foot-summary" id="form-summary">—</div>
       <p class="foot-warning">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l9.5 16.5h-19L12 3z"/><path d="M12 10v4.2M12 16.6v.2"/></svg>
-        <span><b>Warning:</b> Model content must be reviewed and approved by the responsible engineer.</span>
+        <span><b>Warning:</b> The OpenSees model must be checked and approved by the responsible engineer. This is an interface tool: it builds the model and writes the script, it does not verify them.</span>
       </p>
       <div class="foot-meta">
         <span class="foot-credit">Developed by <b>Ahmet Şimşek</b> &middot; <span id="foot-version"></span></span>
@@ -209,6 +210,9 @@
           <div>
             <h3>No model yet</h3>
             <p>Set your parameters on the left, then press <kbd>Build model</kbd>.</p>
+            <p class="empty-tour-line">First time here?
+              <button class="linkbtn" id="empty-tour">Take the tour</button> — it builds a model
+              and changes it, so you can see how each move reaches the script.</p>
           </div>
         </div>
         <!-- Only what the model actually contains; filled in by main.js. -->

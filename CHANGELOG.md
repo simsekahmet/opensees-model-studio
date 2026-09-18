@@ -4,6 +4,40 @@ All notable changes to OpenSees Model Studio are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [semantic versioning](https://semver.org/).
 
+## [1.8.0] — 2026-09-18
+
+### Added
+
+- **A guided tour, in fifteen steps, that drives the app rather than describing
+  it.** A first-time visitor sees a form of ten collapsed sections and an empty
+  viewport, and nothing on screen says that moving a joint rewrites the script or
+  that an insertion point is a rigid offset rather than a drawing. So each step
+  performs the thing it explains: it builds a model, picks a joint, moves it by
+  1.5 m, selects a column, resizes it, sets it on `middleRight` — and then points
+  at the line of Python that changed, `NODE_MOVES` and `'-jntOffset'`, marked in
+  the script itself. Reached from `Take the tour` in the ⋯ menu and from the
+  empty-model card. Arrow keys and Enter step through it, Escape leaves.
+
+  The visitor's own model is not collateral. The whole store is copied on the way
+  in and written back on the way out, however the tour ends — verified by running
+  it to the end and by leaving it at step 4 with Escape, both returning a 3×2×4
+  grid with a moved joint and a resized member exactly as they were.
+
+### Changed
+
+- **The responsible-engineer notice says what the tool does and does not do.**
+  It now reads: *The OpenSees model must be checked and approved by the
+  responsible engineer. This is an interface tool: it builds the model and writes
+  the script, it does not verify them.*
+
+### Fixed
+
+- **Entering or leaving the tour no longer asks about the grid.** The tour builds
+  its own small grid, and restoring the visitor's puts a different one back, so
+  `confirmGridChange` fired at both ends and asked whether to clear hand edits
+  nobody had touched — and the dialog it opened blocked the tour's own rebuild.
+  Neither end is a grid change the visitor made, and neither stops to ask now.
+
 ## [1.7.0] — 2026-08-27
 
 ### Changed

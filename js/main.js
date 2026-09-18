@@ -7,10 +7,10 @@
  */
 
 import {
-  state, resetAll, moveNodes, clearNodeOffsets, setElementOverrides, clearElementOverrides,
+  state, setValue, resetAll, moveNodes, clearNodeOffsets, setElementOverrides, clearElementOverrides,
   deleteElements, replicate, manualEdits, clearManualEdits,
   undo, redo, subscribeHistory, exportProject, importProject,
-  storage, subscribeStorage, validateState, firstIssue,
+  storage, subscribeStorage, validateState, firstIssue, snapshotState, restoreState,
 } from './state.js';
 import { renderForm } from './ui/form.js';
 import {
@@ -28,6 +28,7 @@ import { generateScript } from './codegen/openseespy.js';
 import { toNotebook } from './codegen/notebook.js';
 import { getRecord, subscribeGM, exportSeries, scriptFileName } from './model/groundmotion.js';
 import { readZip, isZip, ZipError } from './results/zip.js';
+import { initTour, startTour } from './ui/tour.js';
 import { createViewer } from './viewer/viewer.js';
 import { fmt, unitsOf } from './units.js';
 
@@ -530,6 +531,35 @@ const SHORTCUTS = [
 ];
 
 el('mi-shortcuts').addEventListener('click', () => { closeMenus(); showShortcuts(); });
+el('mi-tour').addEventListener('click', () => { closeMenus(); startTour(); });
+el('empty-tour').addEventListener('click', () => startTour());
+
+// Everything the tour needs to drive the app, handed over once. It builds a
+// model and changes it, so it is given the way back to whatever was here.
+initTour({
+  state,
+  setValue,
+  moveNodes,
+  setElementOverrides,
+  compile: () => compile(),
+  snapshot: snapshotState,
+  // The tour owns the app while it runs, so neither entering nor leaving it is
+  // a grid change the visitor made, and neither may stop to ask whether to
+  // clear the hand edits involved. Forgetting the grid that was last built is
+  // what says so, at both ends.
+  //
+  // Going in, the hand edits are set aside as well: the tour builds its own
+  // small grid, and a joint moved on a 3×2 grid is a different joint on a 2×1
+  // one. They come back with everything else on the way out.
+  begin: (snap) => {
+    restoreState({ ...snap, nodeOffsets: {}, elementOverrides: {}, deletedElements: {}, addedElements: [] });
+    builtGrid = null;
+  },
+  restore: (snap) => { restoreState(snap); builtGrid = null; },
+  model: () => model,
+  viewer,
+  tabs,
+});
 
 function showShortcuts() {
   const list = document.createElement('dl');
