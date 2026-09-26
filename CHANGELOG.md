@@ -4,6 +4,16 @@ All notable changes to OpenSees Model Studio are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [semantic versioning](https://semver.org/).
 
+## [1.8.3] — 2026-09-27
+
+### Changed
+
+- **`NOTICE` now says who owns the output.** Nothing had stated it, and under a
+  NonCommercial licence a reader could reasonably wonder whether the script the
+  app writes for them is encumbered too. It is not: the licence covers the
+  software, not the scripts it produces, the models they describe, or the
+  results of running them.
+
 ## [1.8.2] — 2026-09-27
 
 ### Changed
