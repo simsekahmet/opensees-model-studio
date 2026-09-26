@@ -1042,7 +1042,9 @@ kbd {
 .foot-meta { flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; }
 .foot-credit { font-family: var(--font); }
 .foot-credit b { color: var(--text-2); font-weight: 600; }
-.foot-rights { font-family: var(--font); font-size: 10px; color: var(--text-3); }
+.foot-rights { font-family: var(--font); font-size: 10px; color: var(--text-3); line-height: 1.45; }
+.foot-rights a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.foot-rights a:hover { color: var(--accent); }
 
 /* Which of the three ways of looking at the model is on. */
 .toolbar-group.is-active-view label { color: var(--accent); }

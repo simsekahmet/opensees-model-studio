@@ -4,6 +4,25 @@ All notable changes to OpenSees Model Studio are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [semantic versioning](https://semver.org/).
 
+## [1.8.2] — 2026-09-27
+
+### Changed
+
+- **The licence moves from CC BY-NC 4.0 to CC BY-NC-SA 4.0**, and says the same
+  thing in all five places it is stated. The notice is the one Creative Commons'
+  own chooser produces, minus its four icons: they load from
+  `mirrors.creativecommons.org`, and the app carries no third-party images.
+
+      LICENSE        the BY-NC-SA 4.0 legal code, 437 lines
+      NOTICE         the plain-text notice
+      package.json   "CC-BY-NC-SA-4.0"
+      README         the licence section
+      index.html     the sidebar footer
+
+- **The footer no longer contradicts the licence.** It read *All rights
+  reserved* while `LICENSE` granted CC rights. It now carries the attribution
+  notice itself, with `rel="license"` on the link to the deed.
+
 ## [1.8.1] — 2026-09-18
 
 ### Removed

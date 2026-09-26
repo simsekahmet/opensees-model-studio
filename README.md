@@ -284,7 +284,8 @@ interface without changing the model layer.
 
 Copyright © 2026 Ahmet Şimşek.
 
-Released under [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/):
-you may share and adapt the work for **non-commercial** purposes with credit.
-Commercial use requires prior written permission. See [LICENSE](LICENSE)
-and [NOTICE](NOTICE).
+OpenSees Model Studio © 2026 by Ahmet Şimşek is licensed under
+[CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/): you may
+share and adapt the work for **non-commercial** purposes, with credit, and
+distributing what you make of it under the same licence. Commercial use
+requires prior written permission. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
