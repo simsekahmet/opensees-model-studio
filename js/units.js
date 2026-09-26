@@ -42,6 +42,56 @@ export const UNIT_SYSTEMS = {
 
 export const DEFAULT_SYSTEM = 'kN-m';
 
+/**
+ * How big each system's units are, against metres and kilonewtons.
+ *
+ * Time is in seconds in all three, so a length and a force are all a quantity
+ * needs to be carried from one system to another. 1 in = 0.0254 m and
+ * 1 kip = 4.4482216152605 kN, both exact by definition.
+ */
+const SCALE = {
+  'kN-m': { L: 1, F: 1 },
+  'N-mm': { L: 1000, F: 1000 },
+  'kip-in': { L: 1 / 0.0254, F: 1 / 4.4482216152605 },
+};
+
+/**
+ * Every schema `unit` kind as powers of force and length. Mass is force·s²/length
+ * in each of the three systems, which is why a tonne stays a tonne between kN·m
+ * and N·mm and becomes kip·s²/in in the third.
+ */
+const DIMENSION = {
+  length: [0, 1],
+  force: [1, 0],
+  stress: [1, -2],
+  area: [0, 2],
+  inertia: [0, 4],
+  areaLoad: [1, -2],
+  lineLoad: [1, -1],
+  mass: [1, -1],
+  massArea: [1, -3],
+  massVol: [1, -4],
+  accel: [0, 1],
+  stiffness: [1, -1],
+  rotStiffness: [1, 1],
+};
+
+/**
+ * What a value of the given kind is multiplied by to express it in another
+ * unit system. A damping coefficient is force per velocity to the power α, so
+ * its factor depends on the exponent of the device it belongs to — which is why
+ * that exponent is an argument rather than part of the table. Returns null for a
+ * kind or a system it does not know, so a caller can leave such a value alone.
+ */
+export function unitFactor(kind, from, to, alpha = 1) {
+  const a = SCALE[from];
+  const b = SCALE[to];
+  if (!a || !b) return null;
+  const dim = kind === 'damping' ? [1, -alpha] : DIMENSION[kind];
+  if (!dim) return null;
+  return (b.F / a.F) ** dim[0] * (b.L / a.L) ** dim[1];
+}
+
 /** Returns the unit descriptor for a system id, falling back to the default. */
 export function unitsOf(systemId) {
   return UNIT_SYSTEMS[systemId] || UNIT_SYSTEMS[DEFAULT_SYSTEM];

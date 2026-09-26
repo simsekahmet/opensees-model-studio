@@ -14,16 +14,12 @@
  */
 
 import { allFields } from './schema.js';
-import { DEFAULT_SYSTEM } from './units.js';
+import { DEFAULT_SYSTEM, unitFactor } from './units.js';
+import { EDITABLE_DIMS } from './model/sections.js';
 import { APP_VERSION, PROJECT_FORMAT } from './version.js';
 import { structuralIssues } from './model/checks.js';
 
 const STORAGE_KEY = 'osms.state.v1';
-
-/** Fields whose default depends on the unit system (their `d` is an object). */
-const unitDependent = new Set(
-  allFields().filter((f) => f.d && typeof f.d === 'object').map((f) => f.id)
-);
 
 /** Builds the default state for a given unit system. */
 export function defaultsFor(unitSystem = DEFAULT_SYSTEM) {
@@ -56,17 +52,17 @@ function emit(detail) {
 }
 
 /**
- * Writes one value. Changing `unitSystem` also rebases every unit-dependent
- * field onto that system's defaults — silently converting them would be worse,
- * because the user's own numbers would stop matching what they typed.
+ * Writes one value. Changing `unitSystem` converts every dimensional quantity
+ * in the model into the new system, so the building stays the building: a
+ * 1000 mm bay becomes a 1 m bay, not a 1000 m one and not the other system's
+ * default. See `convertUnits`.
  */
 export function setValue(id, value) {
   if (state[id] === value) return;
   mark(id);
 
   if (id === 'unitSystem') {
-    const fresh = defaultsFor(value);
-    for (const key of unitDependent) state[key] = fresh[key];
+    convertUnits(state.unitSystem, value);
     state.unitSystem = value;
     persist();
     emit({ id, value, rebased: true });
@@ -76,6 +72,116 @@ export function setValue(id, value) {
   state[id] = value;
   persist();
   emit({ id, value });
+}
+
+/* ─────────────────────────── unit conversion ─────────────────────────── */
+
+/**
+ * The shortest decimal within one part in a billion of the converted value.
+ *
+ * 1/25.4 does not terminate, so a length sent to inches and back comes home with
+ * a residue: 6000 mm returns as 5999.999999 at ten significant figures and as
+ * 6000.00000001 at twelve — rounding at a fixed number of digits cannot avoid
+ * it, because the error it introduces on the way out is the same size as the
+ * grid it rounds to on the way back. Taking the shortest number that is close
+ * enough does avoid it: what the user typed is always within the tolerance of
+ * its own round trip and is always the shortest such number, so it is what
+ * comes back. On the way out it also gives 236.2204724 in rather than
+ * 236.22047244094487. One part in a billion is far below the precision of any
+ * engineering input, and far above the round-off of a double.
+ */
+const TIDY = 1e-9;
+function tidy(v) {
+  if (v === 0 || !Number.isFinite(v)) return v;
+  for (let p = 1; p <= 15; p++) {
+    const c = Number(v.toPrecision(p));
+    if (Math.abs(c - v) <= TIDY * Math.abs(v)) return c;
+  }
+  return v;
+}
+
+/** Lengths a member's edited section can carry, whatever its shape. */
+const SECTION_LENGTHS = new Set(Object.values(EDITABLE_DIMS).flat());
+
+/**
+ * Carries the whole model from one unit system into another.
+ *
+ * A value with a declared `unit` is scaled by that kind's dimensional factor —
+ * a length by the ratio of lengths, a stress by force over length squared, and
+ * so on. That includes every field whether or not it is on screen, because a
+ * hidden field is still part of the model the moment its option is switched
+ * back on. The one field without a unit whose default still depends on the
+ * system, the convergence tolerance, is scaled by the ratio of its two
+ * defaults, which is how those defaults were set against each other.
+ *
+ * The hand edits are carried too: joint moves and copied members are lengths,
+ * edited section dimensions are lengths, and an edited slab load is a load per
+ * length. Left alone, a joint moved 1000 mm would come out moved 1000 m.
+ */
+function convertUnits(from, to) {
+  if (from === to) return;
+
+  for (const f of allFields()) {
+    const v = state[f.id];
+    if (f.unit) {
+      const alpha = f.unit === 'damping' ? dampingExponent(f.id) : 1;
+      const k = unitFactor(f.unit, from, to, alpha);
+      if (k !== null) state[f.id] = scaleValue(v, k);
+    } else if (f.d && typeof f.d === 'object') {
+      const a = Number(f.d[from]);
+      const b = Number(f.d[to]);
+      if (a && b && Number.isFinite(a) && Number.isFinite(b)) {
+        state[f.id] = v === f.d[from] ? f.d[to] : scaleValue(v, b / a);
+      }
+    }
+  }
+
+  const kL = unitFactor('length', from, to);
+  const kW = unitFactor('lineLoad', from, to);
+  const scaleVector = (vec) => (Array.isArray(vec) ? vec.map((x) => scaleValue(x, kL)) : vec);
+
+  const moves = {};
+  for (const [tag, d] of Object.entries(state.nodeOffsets || {})) moves[tag] = scaleVector(d);
+  state.nodeOffsets = moves;
+
+  const edits = {};
+  for (const [tag, ov] of Object.entries(state.elementOverrides || {})) {
+    const next = { ...ov };
+    for (const key of Object.keys(next)) {
+      if (SECTION_LENGTHS.has(key)) next[key] = scaleValue(next[key], kL);
+      else if (key === 'w') next[key] = scaleValue(next[key], kW);
+    }
+    edits[tag] = next;
+  }
+  state.elementOverrides = edits;
+
+  state.addedElements = (state.addedElements || []).map((e) => ({
+    ...e, from: scaleVector(e.from), to: scaleVector(e.to),
+  }));
+}
+
+/**
+ * A number is scaled; a list of spans such as "6, 5, 6" is scaled entry by
+ * entry and written back the same way. Anything that does not read as a number
+ * — a field half typed, an empty one — is left exactly as it was rather than
+ * turned into something the user did not write.
+ */
+function scaleValue(v, k) {
+  if (typeof v === 'number') return Number.isFinite(v) ? tidy(v * k) : v;
+  if (typeof v !== 'string') return v;
+  const tokens = v.split(/[,;\s]+/).filter(Boolean);
+  if (!tokens.length || !tokens.every((t) => Number.isFinite(Number(t)))) return v;
+  return tokens.map((t) => String(tidy(Number(t) * k))).join(', ');
+}
+
+/**
+ * The velocity exponent of the device a damping coefficient belongs to, read
+ * from the sibling field of the same device. An oil damper has none, because
+ * it is linear below its relief force — α = 1.
+ */
+function dampingExponent(id) {
+  const alpha = Number(state[id.slice(0, id.lastIndexOf('.') + 1) + 'alpha']);
+  return Number.isFinite(alpha) ? alpha : 1;
 }
 
 /**

@@ -29,7 +29,7 @@ import { toNotebook } from './codegen/notebook.js';
 import { getRecord, subscribeGM, exportSeries, scriptFileName } from './model/groundmotion.js';
 import { readZip, isZip, ZipError } from './results/zip.js';
 import { createViewer } from './viewer/viewer.js';
-import { fmt, unitsOf } from './units.js';
+import { fmt, unitsOf, unitFactor } from './units.js';
 
 const el = (id) => document.getElementById(id);
 
@@ -551,10 +551,31 @@ function showShortcuts() {
 /* ───────────────────────────── pipeline ─────────────────────────────── */
 
 /** The fields that decide where every joint of the grid lands. */
-const gridSignature = (s) =>
-  [s.baysX, s.baysY, s.numStories, s.spanX, s.spanY, s.storyHeight, s.unitSystem].join('|');
+/**
+ * The fields that decide where every joint of the grid lands, read in metres.
+ *
+ * The grid is a physical thing: a 6000 mm bay and a 6 m bay put the joints in
+ * the same place. Comparing the raw numbers would call a change of unit system
+ * a change of grid and offer to throw away hand edits that land exactly where
+ * they did — and that the unit change has just converted along with everything
+ * else. Nine significant figures absorb the round-off of a conversion and
+ * still tell any real change of span apart.
+ */
+const gridSignature = (s) => {
+  const k = unitFactor('length', s.unitSystem, 'kN-m') || 1;
+  const metres = (text) => String(text ?? '').split(/[,;\s]+/).filter(Boolean)
+    .map((t) => (Number.isFinite(Number(t)) ? String(Number((Number(t) * k).toPrecision(9))) : t))
+    .join(',');
+  return [s.baysX, s.baysY, s.numStories, metres(s.spanX), metres(s.spanY), metres(s.storyHeight)].join('|');
+};
 
 let builtGrid = null;
+
+// The unit system the model on screen was built in. A rebuild keeps the camera
+// on purpose, but not across a change of units: every number in the model has
+// just been multiplied by the same factor, and a camera placed for a building
+// 18 000 units wide is looking at an 18-unit one from far outside it.
+let builtUnits = null;
 
 /**
  * Work done by hand — moved joints, resized, deleted or copied members — is
@@ -635,7 +656,10 @@ async function compile(refreshInspector = true) {
   builtGrid = gridSignature(state);
   dom.sceneEmpty.classList.add('is-hidden');
 
+  const rescaled = builtUnits !== null && builtUnits !== state.unitSystem;
+  builtUnits = state.unitSystem;
   viewer.setModel(model);
+  if (rescaled) viewer.fit();
   if (refreshInspector) {
     showSelection({
       mode: viewer.getNodeSelection().length ? 'node' : 'element',

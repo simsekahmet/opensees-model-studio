@@ -4,6 +4,50 @@ All notable changes to OpenSees Model Studio are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [semantic versioning](https://semver.org/).
 
+## [1.9.0] — 2026-09-27
+
+### Changed
+
+- **Changing the unit system converts the model instead of resetting it.** Until
+  now every field whose default depends on the system was reset to the new
+  system's default — so a 1000 mm bay became the default 6 m, not 1 m — and
+  everything done by hand kept its number and took the new unit: a joint moved
+  1000 mm came out moved 1000 m, and a column edited to 400 mm wide came out
+  400 m wide. Now every dimensional value is carried across by its own
+  dimensional factor — a length by the ratio of lengths, a stress by force over
+  length squared, a damping coefficient by force over velocity to the power of
+  its own device's α — and so are the joint moves, the edited sections, the
+  edited slab loads and the copied members.
+
+  Converted values are written as the shortest decimal within one part in a
+  billion, so a round trip comes home exactly: 1/25.4 does not terminate, and
+  rounding at any fixed number of digits leaves 6000 mm returning as
+  5999.999999. Measured on a 3×2×3 frame with hand edits, walked through all
+  three systems and ten more round trips: every joint where it was, gravity
+  5802.121941 kN and mass 321.633537 t in every system, and all 476 fields back
+  exactly as they started.
+
+- **The view reframes after a change of units.** A rebuild keeps the camera on
+  purpose, but a camera placed for a building 18 000 units wide looks at an
+  18-unit one from far outside it, which is why the model seemed to vanish. The
+  first rebuild after a unit change frames the model again; every other rebuild
+  still leaves the camera alone.
+
+- **A change of units no longer asks about the grid.** The grid is now compared
+  in metres, so a unit change that has just converted the hand edits along with
+  everything else is not mistaken for a new grid that might put them in the
+  wrong place.
+
+- **The notice reads** *The OpenSeesPy model must be checked and approved by the
+  researcher.* The creator's name in the licence notice is no longer a link.
+
+### Added
+
+- **`tests/units.mjs`**, which walks one model with hand edits through all three
+  systems and requires the building it describes to stay put. It fails on the
+  code before this release — a joint 999 m out of place and a gravity load of
+  5.6 billion kN — and is part of `npm test`.
+
 ## [1.8.3] — 2026-09-27
 
 ### Changed
