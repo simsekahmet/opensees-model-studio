@@ -17,10 +17,12 @@
  *   hint     small helper text below the control
  */
 
+import { usesFibers } from './model/sections.js';
 import { UNIT_SYSTEMS } from './units.js';
 import { CONCRETE_MODELS, STEEL_MODELS, modelsOf, matKey } from './model/materials.js';
 import {
   ISOLATOR_TYPES, DAMPER_TYPES, FRICTION_MODELS, catalogueOf, devKey,
+  ISOLATION_ENABLED, isolationOn,
 } from './model/devices.js';
 
 const systemOptions = Object.entries(UNIT_SYSTEMS).map(([value, u]) => ({ value, label: u.label }));
@@ -28,6 +30,9 @@ const systemOptions = Object.entries(UNIT_SYSTEMS).map(([value, u]) => ({ value,
 const isRC    = (s) => s.matSystem === 'rc';
 const isSteel = (s) => s.matSystem === 'steel';
 const isFiber = (s) => s.sectionKind === 'Fiber';
+
+/** Every formulation built from fibers — the ones a section aggregator can wrap. */
+const fiberBased = (s) => usesFibers(s);
 
 /**
  * Which formulations actually read the uniaxial concrete and steel models.
@@ -39,7 +44,7 @@ const isFiber = (s) => s.sectionKind === 'Fiber';
  */
 const usesUniaxial = (s) => s.sectionKind === 'Fiber' || s.sectionKind === 'RCCircularSection';
 
-const usesIso      = (s) => !!s.useIsolation;
+const usesIso      = (s) => isolationOn(s);
 const usesDampers  = (s) => !!s.useDampers;
 const usesFriction = (s) => usesIso(s) && !!ISOLATOR_TYPES[s.isolatorType]?.friction;
 const usesAux      = (s) => usesIso(s) && !!ISOLATOR_TYPES[s.isolatorType]?.aux;
@@ -112,7 +117,7 @@ export const SCHEMA = [
         hint: 'Used for elastic sections and the reported section properties.' },
       { id: 'nu', type: 'number', gt: -1, max: 0.5, label: 'Poisson ratio ν', step: 0.01, d: 0.2, half: true },
       { id: 'density', type: 'number', gt: 0, label: 'Mass density', unit: 'massVol', half: true,
-        d: { 'kN-m': 2.4, 'N-mm': 2.4e-9, 'kip-in': 2.25e-4 } },
+        d: { 'kN-m': 2.4, 'N-mm': 2.4e-9, 'kip-in': 2.2457e-7 } },
     ],
   },
 
@@ -151,12 +156,12 @@ export const SCHEMA = [
         showIf: (s) => s.sectionKind === 'RCCircularSection' },
       { id: 'rcNsteel', type: 'number', label: 'Longitudinal bars', d: 12, min: 4, max: 60, step: 1, half: true,
         showIf: (s) => s.sectionKind === 'RCCircularSection' },
-      { id: 'useAggregator', type: 'check', d: false,
+      { id: 'useAggregator', type: 'check', d: false, showIf: fiberBased,
         label: 'Add shear and torsion (section Aggregator)',
         hint: 'A fiber section carries no shear or torsional stiffness of its own. This wraps '
             + 'it with elastic Vy, Vz and T responses.' },
       { id: 'aggShearFactor', type: 'number', gt: 0, label: 'Shear area factor', step: 0.05, d: 0.833,
-        showIf: (s) => s.useAggregator,
+        showIf: (s) => fiberBased(s) && s.useAggregator,
         hint: 'Av = factor x A, used for the Vy and Vz stiffness.' },
 
       { kind: 'sub', label: 'Columns' },
@@ -226,9 +231,6 @@ export const SCHEMA = [
       { id: 'nfCoreZ', type: 'number', label: 'Core fibers — z', d: 10, min: 2, max: 40, step: 1, half: true, showIf: isFiber },
       { id: 'nfCoverY', type: 'number', label: 'Cover fibers — y', d: 8, min: 2, max: 40, step: 1, half: true, showIf: isFiber },
       { id: 'nfCoverZ', type: 'number', label: 'Cover fibers — z', d: 8, min: 2, max: 40, step: 1, half: true, showIf: isFiber },
-      { id: 'torsionStiff', type: 'check', d: true, showIf: isFiber,
-        label: 'Add elastic torsion (section Aggregator)',
-        hint: 'Fiber sections have no torsional stiffness on their own.' },
     ],
   },
 
@@ -341,6 +343,7 @@ export const SCHEMA = [
     fields: [
       { kind: 'sub', label: 'Base isolation' },
       { id: 'useIsolation', type: 'check', d: false, label: 'Insert a base isolation layer',
+        showIf: () => ISOLATION_ENABLED,
         hint: 'Adds a foundation node under every column and an isolator between it and the superstructure.' },
       { id: 'isolatorPlacement', type: 'select', label: 'Placement', d: 'all', showIf: usesIso, options: [
         { value: 'all', label: 'Under every column' },
@@ -437,11 +440,10 @@ export const SCHEMA = [
       { id: 'lagrangeAlpha', type: 'number', gt: 0, label: 'Lagrange αS = αM', d: 1.0, step: 0.1,
         showIf: (s) => s.constraintsCmd === 'Lagrange' },
       { id: 'numbererCmd', type: 'select', label: 'numberer', d: 'RCM', options: opts(
-        'Plain', 'RCM', 'AMD', 'ParallelPlain', 'ParallelRCM'),
-        hint: 'The two Parallel numberers only apply to an MPI run.' },
+        'Plain', 'RCM', 'AMD') },
       { id: 'systemCmd', type: 'select', label: 'system', d: 'BandGeneral', options: opts(
         'BandGeneral', 'BandSPD', 'ProfileSPD', 'SuperLU', 'UmfPack', 'FullGeneral', 'SparseSYM',
-        'Diagonal', 'MUMPS', 'PFEM', 'PythonSparse'),
+        'Diagonal', 'PFEM', 'PythonSparse'),
         hint: 'PFEM needs a matching analysis type. PythonSparse solves in Python: the script '
           + 'carries a SciPy solver object, so it also needs numpy and scipy installed.' },
       { id: 'testCmd', type: 'select', label: 'test', d: 'NormDispIncr', options: opts(
@@ -465,15 +467,8 @@ export const SCHEMA = [
       { kind: 'sub', label: 'Gravity' },
       { id: 'runGravity', type: 'check', d: true, label: 'Run gravity analysis',
         hint: 'Applied first and held constant; every case below starts from this state.' },
-      { id: 'gravityIntegrator', type: 'select', label: 'Static integrator', d: 'LoadControl',
-        showIf: (s) => s.runGravity, options: opts(
-          'LoadControl', 'DisplacementControl', 'ParallelDisplacementControl', 'MinUnbalDispNorm', 'ArcLength') },
       { id: 'gravitySteps', type: 'number', label: 'Load steps', d: 10, min: 1, max: 500, step: 1,
         showIf: (s) => s.runGravity },
-      { id: 'arcLength', type: 'number', gt: 0, label: 'Arc length s', d: 1.0, step: 0.1, half: true,
-        showIf: (s) => s.runGravity && s.gravityIntegrator === 'ArcLength' },
-      { id: 'arcAlpha', type: 'number', label: 'Arc α', d: 1.0, step: 0.1, half: true,
-        showIf: (s) => s.runGravity && s.gravityIntegrator === 'ArcLength' },
 
       { kind: 'sub', label: 'Load cases to run' },
       { id: 'runModal', type: 'check', d: true, label: 'Modal — eigenvalue analysis' },
@@ -575,14 +570,26 @@ function pushoverFields(shown, p) {
   ];
 }
 
+/**
+ * The choices a catalogue offers. An entry marked `withdrawn` stays defined —
+ * its reason is written beside it — but is not offered, because it was found
+ * not to run; a saved project that names one falls back to the default.
+ *
+ * A function declaration rather than a const: SCHEMA is evaluated above this
+ * line and calls it, and a const would still be in its temporal dead zone.
+ */
+function offered(models) {
+  return Object.entries(models).filter(([, def]) => !def.withdrawn);
+}
+
 function modelOptions(models) {
-  return Object.entries(models).map(([value, def]) => ({ value, label: def.label }));
+  return offered(models).map(([value, def]) => ({ value, label: def.label }));
 }
 
 /** Same expansion as materialFields, for the isolator, friction and damper catalogues. */
 function deviceFields(group, selectKey, visible) {
   const out = [];
-  for (const [type, def] of Object.entries(catalogueOf(group))) {
+  for (const [type, def] of offered(catalogueOf(group))) {
     const shown = (s) => visible(s) && s[selectKey] === type;
     if (def.note) out.push({ kind: 'note-line', label: def.note, showIf: shown });
     for (const p of def.params) {
@@ -609,7 +616,7 @@ function deviceFields(group, selectKey, visible) {
  */
 function materialFields(family, selectKey, visible) {
   const out = [];
-  for (const [type, def] of Object.entries(modelsOf(family))) {
+  for (const [type, def] of offered(modelsOf(family))) {
     const shown = (s) => visible(s) && s[selectKey] === type;
     if (def.note) out.push({ kind: 'note-line', label: def.note, showIf: shown });
     for (const p of def.params) {

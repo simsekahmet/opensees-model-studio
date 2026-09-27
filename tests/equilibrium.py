@@ -45,6 +45,9 @@ CASES = [
     # not an error in the model, but it puts a case like that a few parts in
     # ten thousand off a statics check and there is nothing to learn from it.
     ("moved-column-line", "moved column line"),
+    # A chevron splits its beam in two, and the second half used to carry no
+    # slab load and no self weight: reactions came to 66 % of the applied load.
+    ("damper-config-chevron", "chevron dampers"),
 ]
 
 

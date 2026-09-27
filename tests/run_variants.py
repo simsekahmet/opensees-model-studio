@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import json
+import math
 import os
 import subprocess
 import sys
@@ -39,11 +40,22 @@ NON_CONVERGENCE = (
 )
 
 
+# 10 s of a 1.5 Hz sine under a smooth envelope, 0.3 g peak, at dt = 0.01 s —
+# enough to drive a frame well into its response without being a real record.
+RECORD = "\n".join(
+    f"{0.3 * math.sin(2 * math.pi * 1.5 * t) * math.sin(math.pi * t / 10) ** 2:.6e}"
+    for t in (k * 0.01 for k in range(1000))
+) + "\n"
+
+
 def run_one(script: Path, timeout: int) -> dict:
     started = time.perf_counter()
     # Recorders write relative to the script's OUT_DIR, so each run gets its own
     # scratch directory and nothing is left behind in the repository.
     with tempfile.TemporaryDirectory(prefix="osms-") as work:
+        # A time-history script reads ground_motion.txt beside it; every run gets
+        # the same synthetic record, and a script that does not need it ignores it.
+        (Path(work) / "ground_motion.txt").write_text(RECORD)
         try:
             proc = subprocess.run(
                 [sys.executable, str(script)],

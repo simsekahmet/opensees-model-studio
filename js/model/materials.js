@@ -136,6 +136,8 @@ export const CONCRETE_MODELS = {
   },
 
   ConfinedConcrete01: {
+    // Withdrawn: answers compressive strain with tensile stress and a negative tangent (-1e-5 gives +315.5 at E = -3.15e7) with every argument form openseespy accepts, so a fiber section built from it fails under gravity.
+    withdrawn: true,
     label: 'ConfinedConcrete01 — Braga et al.',
     note: 'Confinement is computed from the hoop layout, so the core factor above is not applied.',
     params: [
@@ -170,6 +172,8 @@ export const CONCRETE_MODELS = {
   },
 
   ConcreteD: {
+    // Withdrawn: returns NaN for every tensile strain below epst when Ec*epst equals ft, which the defaults did exactly, so a beam fails on its first gravity iteration.
+    withdrawn: true,
     label: 'ConcreteD — Chinese design code',
     params: [
       { key: 'fc', label: "f′c", unit: 'stress', d: FPC },

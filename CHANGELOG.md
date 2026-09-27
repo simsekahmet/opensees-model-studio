@@ -4,6 +4,88 @@ All notable changes to OpenSees Model Studio are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [semantic versioning](https://semver.org/).
 
+## [2.0.0] — 2026-09-27
+
+Every select and every toggle was drawn at random, together, four hundred times,
+and each model was built, written and run against openseespy. Only one in ten
+completed. The 108 variants had changed one option at a time, and every defect
+below lives between two options, which is why none of them had been seen.
+
+### Fixed — results that were wrong without an error
+
+- **Gravity is always applied under load control.** `MinUnbalDispNorm` and
+  `ArcLength` choose the load factor themselves, so the gravity step did not stop
+  at 1: measured, it ended at **9.999993** and at **0.221150** times the load,
+  and `loadConst` froze that for every analysis after it. The openseespy
+  examples apply gravity with `LoadControl`, and so does every script now.
+- **A chevron's split beam carries its load on both halves.** The slab load and
+  the self weight were applied to the first half only; reactions came to
+  **66 %** of the gravity load. They now come to 100.000 %.
+- **The kip-in density default** was about 1000 times too large (a value in
+  lb·s²/in⁴); a building started in kip-in weighed 2 474 000 kN against 7 045 kN
+  in kN-m. It is now 2.2457e-7 kip·s²/in⁴.
+- **An unstable mode is reported as unstable,** not as a period of 0.0 s — which
+  read as infinitely stiff when the truth is a non-positive eigenvalue. The
+  script names the mode, `periods.out` gains a `stable` column so mode numbers
+  stay put, and the Results panel shows *unstable*.
+
+### Fixed — combinations that could never run
+
+- **Fiber sections always carry torsion.** OpenSees refuses a 3D fiber section
+  without it; the switch that left it out failed 104 models of 400, and a hidden
+  switch did the same to RC circular models. The switch is gone.
+- **An elastic section is not aggregated.** Members pointed at the aggregated
+  section whether or not it had been built: *section 21 not found*, 24 models.
+  The option now shows only on fiber-based sections.
+- **The Plain handler with a rigid diaphragm** (49 of 49 failed) and
+  **RCCircularSection in a steel frame** (undefined materials, or a silent swap
+  to a fiber section) are refused with the reason.
+- **A time history anchored on a non-positive eigenvalue** stops with a message
+  that says so, instead of *math domain error*.
+- **A time history with no record loaded** is a critical warning, and the
+  download says the script will stop without `ground_motion.txt`.
+
+### Removed
+
+- **Base isolation, for now.** Five of the eleven bearings were found not to
+  run and the layer is being checked. `ISOLATION_ENABLED` in
+  `js/model/devices.js` turns it back on; the code, catalogue and tests stay.
+- **Withdrawn, each with its measured reason beside it:** `ConcreteD` (NaN in
+  tension with its defaults), `ConfinedConcrete01` (tensile stress under
+  compression), `ElastomericX` and `LeadRubberX` (every eigenvalue about zero),
+  `HDR` (30 s isolation modes), `multipleShearSpring` and `YamamotoBiaxialHDR`
+  (shear only). A saved project that names one opens with that choice on its
+  default.
+- **`MUMPS`, `ParallelPlain`, `ParallelRCM`** — parallel builds only, not in
+  openseespy.
+- **The gravity integrator choice,** with `arcLength` and `arcAlpha`: every
+  answer is load control now.
+
+### Added
+
+- **`tests/fuzz.mjs` and `tests/fuzz.py`** — the random sweep, kept: a run may
+  fail to finish, but one that finishes must balance, must not report a period
+  of zero, and must not print the message of any defect fixed here. `npm test`
+  runs sixty, `npm run fuzz` four hundred.
+- **Time-history variants.** None of the 108 had run one; six now do, against a
+  synthetic record.
+- **Checks for the fixes:** the chevron in the statics check, an elastic model
+  with the aggregator switched on, and a roundtrip of a project naming three
+  withdrawn choices.
+
+### Known and open
+
+- `npm run fuzz` finds four models that complete and do not balance: an
+  unrestrained or roller base, which is a mechanism, solved with the `Linear`
+  algorithm or the `Diagonal` system — neither of which checks equilibrium — so
+  the run finishes on a state that is not one. A roller base also gets no
+  critical warning.
+- `FixedNumIter`, `NormDispOrUnbalance` and `NormDispAndUnbalance` are still
+  written with the wrong arguments: the first stops the script, the other two
+  are silently ignored by OpenSees.
+
+  108 → 95 variants | 95 completed | 0 errors | statics, isolation, results, units and fuzz pass
+
 ## [1.9.0] — 2026-09-27
 
 ### Changed

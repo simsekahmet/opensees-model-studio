@@ -39,8 +39,34 @@ export function structuralIssues(s) {
   reinforcement(s, fail);
   groundMotion(s, fail, note);
   damping(s, fail, note);
+  compatibility(s, fail);
 
   return { errors, notices };
+}
+
+/* ─────────────────────── options that cannot be combined ────────────── */
+
+/**
+ * Pairs of options OpenSees cannot run together, whatever the numbers. Each
+ * was found by building every combination and running it: these never
+ * complete, so they are stopped here with the reason rather than written into
+ * a script that fails.
+ */
+function compatibility(s, fail) {
+  // The Plain handler cannot enforce a multi-point constraint, and a rigid
+  // diaphragm is one: 49 models of 49 with both failed under gravity.
+  if (s.rigidDiaphragm && s.constraintsCmd === 'Plain') {
+    fail('constraintsCmd', 'The Plain handler cannot enforce a rigid diaphragm, which ties every '
+      + 'floor to a master node. Choose Transformation, Penalty or Lagrange.');
+  }
+
+  // RCCircularSection is a reinforced concrete section: in a steel frame it
+  // asks for concrete materials the model never defines, and with a
+  // rectangular column it is quietly replaced by a fiber section instead.
+  if (s.matSystem === 'steel' && s.sectionKind === 'RCCircularSection') {
+    fail('sectionKind', 'RCCircularSection is a reinforced concrete section, and this is a steel '
+      + 'frame. Choose Fiber or Elastic for steel members.');
+  }
 }
 
 /* ─────────────────────────── I-section geometry ─────────────────────── */

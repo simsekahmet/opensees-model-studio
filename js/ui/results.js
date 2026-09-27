@@ -166,7 +166,7 @@ function summary(root, results) {
     tiles.push(['Vertical base reaction', fmt(Math.abs(vertical), 2), u.force || '']);
   }
   if (cases.modal && cases.modal.periods && cases.modal.periods.length) {
-    tiles.push(['Fundamental period', `${fmt(cases.modal.periods[0], 4)} s`,
+    tiles.push(['Fundamental period', periodText(cases.modal.periods[0]),
       `${cases.modal.modes} modes`]);
   }
   if (cases.pushover) {
@@ -332,6 +332,15 @@ function select(options, value) {
 
 const MASS_AXES = [['MX', 'X'], ['MY', 'Y'], ['MZ', 'Z']];
 
+/**
+ * A period, or the word for a mode that has none. The script writes an
+ * unstable mode — a non-positive eigenvalue — as null, and a dash would read as
+ * "not computed" when the truth is that the model is unstable there.
+ */
+function periodText(period, unit = ' s') {
+  return period === null || period === undefined ? 'unstable' : `${fmt(period, 4)}${unit}`;
+}
+
 function modal(root, results) {
   const c = results.cases.modal;
   if (!c || !c.periods || !c.periods.length) return;
@@ -347,7 +356,7 @@ function modal(root, results) {
     ...MASS_AXES.map(([, label]) => `Σ ${label} %`));
 
   const rows = c.periods.map((period, i) => {
-    const row = [String(i + 1), fmt(period, 4), period > 0 ? fmt(1 / period, 4) : '—'];
+    const row = [String(i + 1), periodText(period, ''), period > 0 ? fmt(1 / period, 4) : '—'];
     if (hasMass) {
       for (const [key] of MASS_AXES) row.push(pct(ratios[key], i));
       for (const [key] of MASS_AXES) row.push(pct(cumulative[key], i));

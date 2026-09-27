@@ -152,6 +152,8 @@ export const ISOLATOR_TYPES = {
   // mechanism; it is verified and takes its surfaces as L1/L2/L3.
 
   ElastomericX: {
+    // Withdrawn: gives an eigenvalue problem whose six eigenvalues are all about zero, so the periods are meaningless and a time history fails anchoring its damping.
+    withdrawn: true,
     label: 'ElastomericX — rubber bearing, geometry based',
     note: 'Derives its own stiffness from the bearing geometry and models the axial response — cavitation and buckling included — so it needs no companion element.',
     params: [
@@ -168,6 +170,8 @@ export const ISOLATOR_TYPES = {
   },
 
   LeadRubberX: {
+    // Withdrawn: gives an eigenvalue problem whose six eigenvalues are all about zero, so the periods are meaningless and a time history fails anchoring its damping.
+    withdrawn: true,
     label: 'LeadRubberX — lead rubber bearing, geometry based',
     note: 'Derives its own stiffness from the bearing geometry and models the axial response — cavitation and buckling included — so it needs no companion element.',
     params: [
@@ -184,6 +188,8 @@ export const ISOLATOR_TYPES = {
   },
 
   HDR: {
+    // Withdrawn: puts the first two isolation modes at about 30 s with its defaults, far outside anything a rubber bearing gives.
+    withdrawn: true,
     label: 'HDR — high damping rubber bearing',
     note: 'Derives its own stiffness from the bearing geometry and models the axial response — cavitation and buckling included — so it needs no companion element.',
     params: [
@@ -208,6 +214,8 @@ export const ISOLATOR_TYPES = {
   },
 
   multipleShearSpring: {
+    // Withdrawn: carries shear only, so the isolation level has no vertical or torsional stiffness and gravity does not converge.
+    withdrawn: true,
     label: 'multipleShearSpring — radial spring set',
     partialDOF: true,
     note: 'Carries shear only — it supplies no vertical or torsional stiffness, so on its own it leaves the isolation level with a zero-energy mode. Pair it with a companion element, or use one of the bearings that take -P, -T, -My and -Mz.',
@@ -226,6 +234,8 @@ export const ISOLATOR_TYPES = {
   },
 
   YamamotoBiaxialHDR: {
+    // Withdrawn: carries shear only, so the isolation level has no vertical or torsional stiffness and gravity does not converge.
+    withdrawn: true,
     label: 'YamamotoBiaxialHDR — biaxial high damping rubber',
     partialDOF: true,
     note: 'Carries shear only — it supplies no vertical or torsional stiffness, so on its own it leaves the isolation level with a zero-energy mode. Pair it with a companion element, or use one of the bearings that take -P, -T, -My and -Mz.',
@@ -304,6 +314,18 @@ export const devKey = (group, type, key) => `dev.${group}.${type}.${key}`;
 
 export const devConst = (group, key) =>
   `${group.toUpperCase()}_${key.replace(/[^A-Za-z0-9]/g, '').toUpperCase()}`;
+
+/**
+ * Base isolation is switched off for now. The audit of every option combination
+ * found five of the eleven bearings unusable and the rest not yet trusted, so
+ * the layer is taken out of the form and out of the model while it is worked
+ * on — the code, the catalogue and its tests all stay, and turning this back to
+ * true restores it. A saved project that asks for isolation builds without it.
+ */
+export const ISOLATION_ENABLED = false;
+
+/** Whether this model has an isolation layer — the one place that decides it. */
+export const isolationOn = (s) => ISOLATION_ENABLED && !!s.useIsolation;
 
 export function catalogueOf(group) {
   return { iso: ISOLATOR_TYPES, damp: DAMPER_TYPES, frn: FRICTION_MODELS }[group];

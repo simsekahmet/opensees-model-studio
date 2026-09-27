@@ -14,7 +14,7 @@ import {
 import { usesFibers, editedSectionGroups } from '../model/sections.js';
 import { scriptFileName } from '../model/groundmotion.js';
 import {
-  ISOLATOR_TYPES, DAMPER_TYPES, FRICTION_MODELS, devKey, devConst,
+  ISOLATOR_TYPES, DAMPER_TYPES, FRICTION_MODELS, devKey, devConst, isolationOn,
 } from '../model/devices.js';
 
 /* Fixed tag constants, mirrored in the generated script. */
@@ -106,7 +106,14 @@ function groupInsertions(model) {
 }
 
 /** Tag a beam integration should reference, accounting for the Aggregator wrap. */
-const sectionRef = (s, tag) => (s.useAggregator ? tag + 20 : tag);
+/**
+ * Whether members use the aggregated section. The aggregator is only built on
+ * a fiber-based section — an elastic one carries its own torsion already — so
+ * the members must only point at it then. They used to point at it whenever
+ * the option was on, and an elastic model stopped with "section 21 not found".
+ */
+const aggregated = (s) => !!s.useAggregator && usesFibers(s);
+const sectionRef = (s, tag) => (aggregated(s) ? tag + 20 : tag);
 
 export function generateScript(s, model, gm = null) {
   const u = unitsOf(s.unitSystem);
@@ -123,7 +130,7 @@ export function generateScript(s, model, gm = null) {
   const { column, beamX, beamY, shared } = model.sections;
   const fiber = usesFibers(s);
   const steelSystem = s.matSystem === 'steel';
-  const isolated = !!s.useIsolation;
+  const isolated = isolationOn(s);
   const chevron = !!s.useDampers && s.damperConfig === 'chevron';
   const isoH = isolated ? Number(s.isolatorHeight) || 0 : 0;
   const pySparse = s.systemCmd === 'PythonSparse';
@@ -273,7 +280,7 @@ export function generateScript(s, model, gm = null) {
     '    return 300000 + level * 1000 + j * NX_N + i + 1',
     ''
   );
-  if (s.useIsolation) {
+  if (isolated) {
     w(
       '',
       'def foundation_tag(i, j):',
@@ -603,6 +610,17 @@ export function generateScript(s, model, gm = null) {
       '            else:',
       '                ops.element(' + elementArgs(s, 'beamY', 'beam_y_tag(level, i, j)',
         'node_tag(level, i, j)', 'node_tag(level, i, j + 1)', shared ? 'BX' : 'BY', T.transfBeamY, T.intBeamY) + ')',
+      '',
+      '# A chevron beam is two elements, and a load meant for the beam belongs on',
+      '# both of them: the loops below name a beam by its first half only.',
+      'SPLIT_HALF = {beam_x_tag(l, i, j): 600000 + l * 1000 + j * N_X + i + 1 for (l, i, j) in CHEVRON_X}',
+      'SPLIT_HALF.update({beam_y_tag(l, i, j): 700000 + l * 1000 + j * NX_N + i + 1',
+      '                   for (l, i, j) in CHEVRON_Y})',
+      '',
+      '',
+      'def halves(tag):',
+      '    return (tag, SPLIT_HALF[tag]) if tag in SPLIT_HALF else (tag,)',
+      '',
       ''
     );
   } else {
@@ -668,7 +686,12 @@ export function generateScript(s, model, gm = null) {
       '    if tag in DELETED:',
       '        return',
     ] : []),
-    '    beam_load[tag] = beam_load.get(tag, 0.0) + w',
+    ...(chevron ? [
+      '    for half in halves(tag):',
+      '        beam_load[half] = beam_load.get(half, 0.0) + w',
+    ] : [
+      '    beam_load[tag] = beam_load.get(tag, 0.0) + w',
+    ]),
     '',
     '',
     'Q_SLAB = DL_FACTOR * DEAD_FLOOR + LL_FACTOR * LIVE_FLOOR',
@@ -711,11 +734,15 @@ export function generateScript(s, model, gm = null) {
       '    for j in range(NY_N):',
       '        for i in range(N_X):',
       ...(deletedTags.length ? ['            if beam_x_tag(level, i, j) in DELETED:', '                continue'] : []),
-      "            ops.eleLoad('-ele', beam_x_tag(level, i, j), '-type', '-beamUniform', -W_BX, 0.0)",
+      chevron
+        ? "            ops.eleLoad('-ele', *halves(beam_x_tag(level, i, j)), '-type', '-beamUniform', -W_BX, 0.0)"
+        : "            ops.eleLoad('-ele', beam_x_tag(level, i, j), '-type', '-beamUniform', -W_BX, 0.0)",
       '    for j in range(N_Y):',
       '        for i in range(NX_N):',
       ...(deletedTags.length ? ['            if beam_y_tag(level, i, j) in DELETED:', '                continue'] : []),
-      "            ops.eleLoad('-ele', beam_y_tag(level, i, j), '-type', '-beamUniform', -W_BY, 0.0)",
+      chevron
+        ? "            ops.eleLoad('-ele', *halves(beam_y_tag(level, i, j)), '-type', '-beamUniform', -W_BY, 0.0)"
+        : "            ops.eleLoad('-ele', beam_y_tag(level, i, j), '-type', '-beamUniform', -W_BY, 0.0)",
       ''
     );
   }
@@ -1456,13 +1483,13 @@ function emitStateReset(w, s) {
 }
 
 function emitGravity(w, s) {
-  const integ = {
-    LoadControl: "ops.integrator('LoadControl', 1.0 / N_STEPS)",
-    DisplacementControl: "ops.integrator('LoadControl', 1.0 / N_STEPS)  # gravity is load driven",
-    ParallelDisplacementControl: "ops.integrator('LoadControl', 1.0 / N_STEPS)  # gravity is load driven",
-    MinUnbalDispNorm: "ops.integrator('MinUnbalDispNorm', 1.0 / N_STEPS)",
-    ArcLength: `ops.integrator('ArcLength', ${pf(s.arcLength)}, ${pf(s.arcAlpha)})`,
-  }[s.gravityIntegrator] || "ops.integrator('LoadControl', 1.0 / N_STEPS)";
+  // Gravity is applied under load control, as the openseespy examples apply it.
+  // There used to be a choice here, and two of its five answers were wrong:
+  // MinUnbalDispNorm and ArcLength choose the load factor themselves, so
+  // N_STEPS steps of them do not stop at 1 — measured, gravity ended at
+  // 9.999993 and at 0.221150 times the load, and loadConst then froze that for
+  // every analysis after it. The other three already came out as load control.
+  const integ = "ops.integrator('LoadControl', 1.0 / N_STEPS)";
 
   w(
     '# ── Gravity ──────────────────────────────────────────────────────────',
@@ -1504,22 +1531,35 @@ function emitModal(w, s) {
   w(
     '# ── Modal ────────────────────────────────────────────────────────────',
     `eigenvalues = ops.eigen(${py(s.eigenSolver)}, N_MODES)`,
-    'periods = [2.0 * math.pi / math.sqrt(lam) if lam > 0.0 else 0.0 for lam in eigenvalues]',
+    '',
+    '# A mode with a non-positive eigenvalue has no period: the model has lost its',
+    '# stability there under gravity, or has a mechanism. Writing it as 0.0 s would',
+    '# read as an infinitely stiff mode, the opposite of what it is, so it is kept',
+    '# as None and named instead.',
+    'periods = [2.0 * math.pi / math.sqrt(lam) if lam > 0.0 else None for lam in eigenvalues]',
+    'unstable = [n for n, period in enumerate(periods, start=1) if period is None]',
     '',
     "print('\\nMode      Period        Frequency')",
     "print('-' * 38)",
-    'for n, period in enumerate(periods, start=1):',
-    "    freq = 1.0 / period if period > 0.0 else float('inf')",
-    "    print(f'{n:>4}   {period:>10.4f} s   {freq:>8.4f} Hz')",
+    'for n, (period, lam) in enumerate(zip(periods, eigenvalues), start=1):',
+    '    if period is None:',
+    "        print(f'{n:>4}   unstable - eigenvalue {lam:.3e}')",
+    '    else:',
+    "        print(f'{n:>4}   {period:>10.4f} s   {1.0 / period:>8.4f} Hz')",
+    'if unstable:',
+    "    print('WARNING: mode ' + ', '.join(map(str, unstable)) + ' has a non-positive eigenvalue - '",
+    "          'the model is unstable under gravity there, and no period exists.')",
     ''
   );
   if (!s.useRecorders) return;
 
   w(
+    "# An unstable mode keeps its row, so mode numbers stay where they are, and",
+    "# says so in its own column rather than through a period of zero.",
     "write_table('periods.out',",
-    '            [(n, period, 1.0 / period if period > 0.0 else 0.0, lam)',
+    '            [(n, period or 0.0, 1.0 / period if period else 0.0, lam, 0.0 if period is None else 1.0)',
     '             for n, (period, lam) in enumerate(zip(periods, eigenvalues), start=1)],',
-    "            ['mode', 'period', 'frequency', 'lambda'], 'modal')",
+    "            ['mode', 'period', 'frequency', 'lambda', 'stable'], 'modal')",
     '',
     '# Mode shapes, one row per node per mode, so the viewer can draw them.',
     'mode_rows = []',
@@ -1537,6 +1577,7 @@ function emitModal(w, s) {
     "    RESULTS['cases']['modal'] = {",
     "        'modes': N_MODES,",
     "        'periods': list(periods),",
+    "        'unstable': unstable,",
     "        'totalMass': list(props['totalMass']),",
     "        'massRatios': {axis: list(props[f'partiMassRatios{axis}'])",
     "                       for axis in ('MX', 'MY', 'MZ', 'RMX', 'RMY', 'RMZ')},",
@@ -1544,7 +1585,7 @@ function emitModal(w, s) {
     "                                 for axis in ('MX', 'MY', 'MZ', 'RMX', 'RMY', 'RMZ')},",
     '    }',
     'except Exception as exc:',
-    "    RESULTS['cases']['modal'] = {'modes': N_MODES, 'periods': list(periods)}",
+    "    RESULTS['cases']['modal'] = {'modes': N_MODES, 'periods': list(periods), 'unstable': unstable}",
     "    print(f'Modal participation unavailable: {exc}')",
     ''
   );
@@ -1706,6 +1747,13 @@ function emitTimeHistory(w, s, model, gm) {
     `DAMP_RATIO = ${pf(s.dampRatio)}`,
     `MODE_I, MODE_J = ${pi(s.dampModeI)}, ${pi(s.dampModeJ)}`,
     'lambdas = ops.eigen(\'-genBandArpack\', max(MODE_I, MODE_J))',
+    '# A non-positive eigenvalue has no frequency to anchor damping on; without',
+    '# this the square root below stops the run with "math domain error".',
+    'for mode in (MODE_I, MODE_J):',
+    '    if not lambdas[mode - 1] > 0.0:',
+    "        raise RuntimeError(f'Mode {mode} has a non-positive eigenvalue ({lambdas[mode - 1]:.3e}), '",
+    "                           'so Rayleigh damping cannot be anchored on it: the model is unstable '",
+    "                           'under gravity. Check the supports, the members and P-Delta.')",
     'w_i = math.sqrt(lambdas[MODE_I - 1])',
     'w_j = math.sqrt(lambdas[MODE_J - 1])',
     'a0 = 2.0 * DAMP_RATIO * w_i * w_j / (w_i + w_j)',
@@ -1878,7 +1926,11 @@ function emitFiberSection(w, s, sec, tag, prefix, steelSystem, nd = false) {
   const concrete = nd ? 20 : steelSystem ? T.matSteel : T.matCore;
   const cover = nd ? 20 : steelSystem ? T.matSteel : T.matCover;
   const steel = nd ? 20 : T.matSteel;
-  const gj = !nd && s.torsionStiff ? `, '-GJ', G_MOD * ${prefix}_J` : '';
+  // A 3D fiber section is refused without a torsional stiffness — OpenSees
+  // stops at the section command with "torsion not specified" — so there is no
+  // model in which leaving it out works. An NDFiber section takes its torsion
+  // from the nD material itself.
+  const gj = !nd ? `, '-GJ', G_MOD * ${prefix}_J` : '';
 
   w(`# ${label} — ${nd ? 'NDFiber' : 'fiber'} section ${tag}`);
   w(`ops.section(${nd ? "'NDFiber'" : "'Fiber'"}, ${tag}${gj})`);
@@ -1940,7 +1992,7 @@ function emitSectionOfKind(w, s, sec, tag, prefix, steelSystem) {
   } else {
     emitFiberSection(w, s, sec, tag, prefix, steelSystem, s.sectionKind === 'NDFiber');
   }
-  if (s.useAggregator) emitAggregator(w, s, sec, tag, prefix);
+  if (aggregated(s)) emitAggregator(w, s, sec, tag, prefix);
 }
 
 /** The nDMaterial the NDFiber patches and layers are made of. */

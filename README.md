@@ -114,8 +114,9 @@ Everything you set in the sidebar maps onto a real OpenSeesPy command:
   `Steel01`, `Steel02`, `Hysteretic`, with Mander confinement applied to the core fibers.
 - **Sections** — `Elastic` with cracked-section modifiers, `Fiber` built from `patch`
   and `layer` calls, `NDFiber` over an `ElasticIsotropic` or `J2Plasticity` nDMaterial,
-  and the built-in `RCCircularSection`. Any of them can be wrapped in a
-  `section('Aggregator', …)` that adds elastic shear and torsion. `Elastic` keeps the
+  and the built-in `RCCircularSection`. The fiber-based ones can be wrapped in a
+  `section('Aggregator', …)` that adds elastic shear and torsion; an elastic section
+  carries its own torsion and is not wrapped. `Elastic` keeps the
   material response linear; the others give material nonlinearity, while geometric
   nonlinearity is set separately by the transformation.
 
@@ -174,9 +175,12 @@ js/
 tests/
   generate.mjs       writes one script per variant, headlessly
   roundtrip.mjs      a model must survive the trip out and back
+  units.mjs          a change of units must not move the building
   run_variants.py    runs them against real openseespy
-  equilibrium.py     statics check on fixed and isolated bases
+  equilibrium.py     statics check: reactions against the applied gravity
+  isolation.py       one analysis must not inherit another's state
   results.py         end-to-end check of the result pipeline
+  fuzz.mjs, fuzz.py  every option drawn at random, together, and run
 ```
 
 Adding a new OpenSeesPy option means adding one entry to `js/schema.js` and one
@@ -218,16 +222,23 @@ npm test
 ```
 
 `generate.mjs` imports the app's own builder and code generator — the same
-modules the browser loads — and writes one script per variant. Around a hundred
-are produced, walking the catalogues rather than a hard-coded list, so every
-material model, isolator, friction model, damper, element, transformation,
-solver option and analysis case is covered, along with moved joints and edited
-members. `run_variants.py` then runs each one against a real `openseespy`.
+modules the browser loads — and writes one script per variant. They walk the
+catalogues rather than a hard-coded list, so every offered material model,
+damper, element, transformation, solver option and analysis case is covered —
+the time history included, run against a synthetic record — along with moved
+joints and edited members. `run_variants.py` then runs each one against a real
+`openseespy`.
 
-The last run on Python 3.12: **95 completed, 4 did not converge, 0 script
-errors.** The four are `ConcreteD`, `ConfinedConcrete01`, `YamamotoBiaxialHDR`
-and `multipleShearSpring` — highly nonlinear laws under a full gravity step,
-valid scripts and difficult models.
+The last run on Python 3.12: **95 variants, 95 completed, 0 did not converge,
+0 script errors.**
+
+Variants change one option at a time, which is exactly why they cannot see a
+defect that lives between two options. `fuzz.mjs` draws every select and every
+toggle at random, together, from a fixed seed, and `fuzz.py` runs what it
+writes: a combination may fail to finish, but one that finishes must balance,
+must not report a period of zero, and must not print a message from a defect
+that has already been fixed. `npm test` runs sixty; `npm run fuzz` runs four
+hundred.
 
 `roundtrip.mjs` sends a model with hand edits out through the script, the
 notebook and the project file and reads all three back, field by field: `Load
@@ -235,16 +246,38 @@ model file` is only a promise if every format survives the trip.
 
 `equilibrium.py` closes statics end to end: the sum of the vertical base
 reactions the solver reports is compared against the gravity load the builder
-applied, for a fixed base, a fully isolated base and a partly isolated one. All
-three balance to within the recorder's own output precision.
+applied — for a fixed base, a column line moved in plan, and chevron dampers,
+whose split beams once carried load on one half only. All of them balance to
+within the recorder's own output precision.
 
-Three documented entries are deliberately not offered, because verification
+Some documented entries are deliberately not offered, because verification
 showed they cannot run. `RambergOsgoodSteel` and `FRPConfinedConcrete` make
 OpenSees print *"temporarily removed from the compiled versions"* and abort. The
 `TFP` bearing is accepted at creation but then ends the gravity analysis in an
 access violation inside the compiled `TFP_Bearing` element — the process dies
 rather than reporting an error. Use `TripleFrictionPendulum` for the same
 mechanism; it is verified.
+
+Seven more were withdrawn after the combination audit, each marked `withdrawn`
+in its catalogue with the reason beside it, so a saved project that names one
+opens with that choice back on its default:
+
+- `ConcreteD` returns NaN for every tensile strain below `epst` when
+  `Ec · epst = ft`, which its defaults did exactly.
+- `ConfinedConcrete01` answers compressive strain with tensile stress and a
+  negative tangent, with every argument form openseespy accepts.
+- `ElastomericX` and `LeadRubberX` give an eigenvalue problem whose eigenvalues
+  are all about zero; `HDR` puts the isolation modes near 30 s.
+- `multipleShearSpring` and `YamamotoBiaxialHDR` carry shear only, so the
+  isolation level has no vertical stiffness and gravity does not converge.
+
+`MUMPS`, `ParallelPlain` and `ParallelRCM` belong to the parallel builds of
+OpenSees and are not in openseespy, so they are not offered either.
+
+**Base isolation is switched off for now.** With five of the eleven bearings
+withdrawn and the layer still being checked, it is out of the form and out of
+the model; its code, catalogue and tests stay, and `ISOLATION_ENABLED` in
+`js/model/devices.js` turns it back on.
 
 ## Running the generated script
 

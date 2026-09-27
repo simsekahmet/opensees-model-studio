@@ -18,7 +18,7 @@
 
 import { expandList, validateState, firstIssue } from '../state.js';
 import { allSections, sectionWithDims, EDITABLE_DIMS, usesFibers } from './sections.js';
-import { ISOLATOR_TYPES } from './devices.js';
+import { ISOLATOR_TYPES, isolationOn } from './devices.js';
 import { getRecord } from './groundmotion.js';
 import { insertionOffset, hasOffset, DEFAULT_INSERTION } from './insertion.js';
 
@@ -105,7 +105,7 @@ export function buildModel(s) {
 
   // With base isolation the restraint moves down to a separate foundation
   // node, and the superstructure base is lifted by the bearing height.
-  const isolated = !!s.useIsolation;
+  const isolated = isolationOn(s);
   const isoH = isolated ? Math.max(0, numOr(s.isolatorHeight, 0)) : 0;
   const isoAt = isolated ? isolatorGrid(s.isolatorPlacement, nxN, nyN) : null;
 
@@ -629,9 +629,13 @@ export function buildModel(s) {
       + 'insertion point other than the centroid. The offset is written as a rigid end offset, '
       + 'so it adds real stiffness and eccentricity — not just a drawing shift.');
   }
+  // Critical rather than a warning: without the file the script does not run
+  // the time history badly, it stops with FileNotFoundError the moment it gets
+  // there, after every analysis before it has already been paid for.
   if (s.runTimeHistory && !getRecord()) {
-    warn('Time history is on but no acceleration record is loaded. The script still expects the '
-      + 'file beside it at run time and stops if it is missing.');
+    critical('Time history is on but no acceleration record is loaded. The script will stop when '
+      + 'it reaches the time history unless a record named ground_motion.txt is placed beside it — '
+      + 'load one under Analysis, or switch the time history off.');
   }
   for (const [name, v] of Object.entries({ 'Bay width X': spansX, 'Bay width Y': spansY, 'Story height': heights })) {
     if (v.some((x) => !(x > 0))) errors.push(`${name} must be greater than zero.`);

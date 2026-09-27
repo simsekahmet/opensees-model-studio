@@ -953,6 +953,15 @@ function download() {
   if (!script) return toast('Nothing to download', 'Build the model first.', 'warn');
   downloadText(`${slug(state.projectName)}.py`, script);
   const rec = getRecord();
+  if (state.runTimeHistory && !rec) {
+    // Saying "run it" about a script that is going to stop would be the wrong
+    // thing to say at the moment the file lands.
+    toast('Script saved — no ground motion loaded',
+      'Time history is on but no record is loaded, so the script will stop when it looks for '
+      + 'ground_motion.txt. Load a record under Analysis, or put one with that name beside the script.',
+      'warn', 9000);
+    return;
+  }
   toast('Script saved',
     rec && state.runTimeHistory
       ? `Put ${scriptFileName(rec)} in the same folder, then run: python <file>.py`

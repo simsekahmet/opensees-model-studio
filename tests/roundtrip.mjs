@@ -46,7 +46,7 @@ const CHANGES = {
   beamB: 0.35,
   beamH: 0.62,
   useIsolation: true,
-  isolatorType: 'LeadRubberX',
+  isolatorType: 'TripleFrictionPendulum',
   useDampers: true,
   damperType: 'ViscousDamper',
   runModal: true,
@@ -104,6 +104,22 @@ for (const [name, text] of Object.entries(formats)) {
   check(`${name}: rebuilds to the same model`,
     again.ok && again.stats.elements === built.stats.elements && again.stats.nodes === built.stats.nodes,
     `${again.stats.nodes} nodes, ${again.stats.elements} elements`);
+}
+
+/* A project saved with a choice that has since been withdrawn — an element
+   found not to run — must open, with that one choice back on its default,
+   rather than refuse to load or carry the dead choice into a model. */
+st.resetAll();
+{
+  const saved = JSON.parse(st.exportProject());
+  saved.state.concreteMat = 'ConcreteD';
+  saved.state.isolatorType = 'LeadRubberX';
+  saved.state.systemCmd = 'MUMPS';
+  st.importProject(JSON.stringify(saved));
+  const fell = ['concreteMat', 'isolatorType', 'systemCmd']
+    .filter((k) => st.state[k] === st.defaultsFor(st.state.unitSystem)[k]);
+  check('a withdrawn choice falls back to its default', fell.length === 3,
+    `${fell.length} of 3 fell back: ${fell.join(', ')}`);
 }
 
 /* A script that was not written here has to say so, not load half a model. */

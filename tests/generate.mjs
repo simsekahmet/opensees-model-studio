@@ -27,7 +27,7 @@ const { defaultsFor } = await import('../js/state.js');
 const { buildModel } = await import('../js/model/builder.js');
 const { generateScript } = await import('../js/codegen/openseespy.js');
 const { CONCRETE_MODELS, STEEL_MODELS } = await import('../js/model/materials.js');
-const { ISOLATOR_TYPES, DAMPER_TYPES, FRICTION_MODELS } = await import('../js/model/devices.js');
+const { ISOLATOR_TYPES, DAMPER_TYPES, FRICTION_MODELS, ISOLATION_ENABLED } = await import('../js/model/devices.js');
 
 const base = defaultsFor('kN-m');
 
@@ -57,10 +57,13 @@ for (const sectionKind of ['Elastic', 'Fiber', 'NDFiber', 'RCCircularSection']) 
 add('section-aggregator', { sectionKind: 'Fiber', useAggregator: true });
 
 /* ── every material model that is offered ────────────────────────────── */
-for (const key of Object.keys(CONCRETE_MODELS)) {
+// A withdrawn entry is not offered, so there is nothing of it to test.
+const offered = (models) => Object.keys(models).filter((k) => !models[k].withdrawn);
+
+for (const key of offered(CONCRETE_MODELS)) {
   add(`concrete-${key}`, { matSystem: 'rc', sectionKind: 'Fiber', concreteMat: key });
 }
-for (const key of Object.keys(STEEL_MODELS)) {
+for (const key of offered(STEEL_MODELS)) {
   add(`steel-${key}`, { matSystem: 'rc', sectionKind: 'Fiber', steelMat: key });
 }
 
@@ -73,20 +76,42 @@ for (const transf of ['Linear', 'PDelta', 'Corotational']) {
 }
 
 /* ── isolators, friction models and dampers ──────────────────────────── */
-for (const isolatorType of Object.keys(ISOLATOR_TYPES)) {
-  add(`isolator-${isolatorType}`, { useIsolation: true, isolatorType, useRecorders: true });
+// Base isolation is switched off for now (see ISOLATION_ENABLED); its variants
+// come back with it rather than testing a layer the model no longer builds.
+if (ISOLATION_ENABLED) {
+  for (const isolatorType of offered(ISOLATOR_TYPES)) {
+    add(`isolator-${isolatorType}`, { useIsolation: true, isolatorType, useRecorders: true });
+  }
+  for (const frictionType of offered(FRICTION_MODELS)) {
+    add(`friction-${frictionType}`, { useIsolation: true, isolatorType: 'singleFPBearing', frictionType });
+  }
 }
-for (const frictionType of Object.keys(FRICTION_MODELS)) {
-  add(`friction-${frictionType}`, { useIsolation: true, isolatorType: 'singleFPBearing', frictionType });
-}
-for (const damperType of Object.keys(DAMPER_TYPES)) {
+for (const damperType of offered(DAMPER_TYPES)) {
   add(`damper-${damperType}`, { useDampers: true, damperType });
 }
 for (const damperConfig of ['diagonal', 'chevron']) {
   add(`damper-config-${damperConfig}`, { useDampers: true, damperConfig });
 }
-add('isolation-and-dampers', { useIsolation: true, useDampers: true, useRecorders: true });
-add('isolation-partial', { useIsolation: true, isolatorPlacement: 'perimeter', useRecorders: true });
+if (ISOLATION_ENABLED) {
+  add('isolation-and-dampers', { useIsolation: true, useDampers: true, useRecorders: true });
+  add('isolation-partial', { useIsolation: true, isolatorPlacement: 'perimeter', useRecorders: true });
+}
+
+/* ── time history ─────────────────────────────────────────────────────
+   None of the variants above ran one, so the whole path — the record, the
+   Rayleigh anchor, the integrators — had never met a real openseespy. The
+   runner puts a synthetic record named ground_motion.txt beside every script;
+   gmDt matches it. */
+const TH = { runTimeHistory: true, useRecorders: true, gmDt: 0.01 };
+for (const thIntegrator of ['Newmark', 'HHT', 'GeneralizedAlpha', 'TRBDF2']) {
+  add(`time-history-${thIntegrator}`, { ...TH, thIntegrator });
+}
+add('time-history-dampers', { ...TH, useDampers: true });
+add('time-history-after-pushover', { ...TH, runPushover: true });
+
+/* ── options that used to point at things that were never built ────── */
+// An elastic section never had an aggregator, but members pointed at one.
+add('section-elastic-aggregator', { sectionKind: 'Elastic', useAggregator: true });
 
 /* ── the solver stack ────────────────────────────────────────────────── */
 for (const systemCmd of ['BandGeneral', 'BandSPD', 'ProfileSPD', 'SuperLU', 'UmfPack',
@@ -109,7 +134,7 @@ for (const slabElement of ['ShellMITC4', 'ShellDKGQ', 'ShellNLDKGQ']) {
 }
 add('slab-mass-from-shell', { useSlabs: true, slabMassSource: 'shell', runModal: true });
 add('slab-and-diaphragm', { useSlabs: true, rigidDiaphragm: true, runModal: true });
-add('slab-and-isolation', { useSlabs: true, useIsolation: true, useRecorders: true });
+if (ISOLATION_ENABLED) add('slab-and-isolation', { useSlabs: true, useIsolation: true, useRecorders: true });
 
 /* ── analysis cases ──────────────────────────────────────────────────── */
 add('modal', { runModal: true });
