@@ -18,7 +18,7 @@
 
 import { expandList, validateState, firstIssue } from '../state.js';
 import { allSections, sectionWithDims, EDITABLE_DIMS, usesFibers } from './sections.js';
-import { ISOLATOR_TYPES, isolationOn } from './devices.js';
+import { ISOLATOR_TYPES, isolationOn, dampersOn } from './devices.js';
 import { getRecord } from './groundmotion.js';
 import { insertionOffset, hasOffset, DEFAULT_INSERTION } from './insertion.js';
 
@@ -239,7 +239,7 @@ export function buildModel(s) {
   /* ── dampers ────────────────────────────────────────────────────────── */
   const damperSection = deviceSection(s, sections.beamX, 'Damper');
   const dampers = [];
-  if (s.useDampers) {
+  if (dampersOn(s)) {
     const stories = selector(s.damperStories, range(1, nz), new Set([1]));
     const bays = { x: selector(s.damperBays, range(0, nx - 1), new Set([0, nx - 1])),
                    y: selector(s.damperBays, range(0, ny - 1), new Set([0, ny - 1])) };
@@ -569,7 +569,8 @@ export function buildModel(s) {
   const critical = (text) => warnings.push({ level: 'critical', text });
 
   if (s.baseFixity === 'Free') {
-    critical('The base is unrestrained — the model has rigid body modes and the analysis will not converge.');
+    critical('The base is unrestrained — the model has rigid body modes and no static equilibrium exists '
+      + 'under gravity. The analysis may still report convergence; whatever it reports is wrong.');
   }
   if (movedTags.length) {
     warn(`${movedTags.length} joint${movedTags.length > 1 ? 's have' : ' has'} been moved off the grid. `
@@ -585,11 +586,41 @@ export function buildModel(s) {
   if (isolated && s.rigidDiaphragm) {
     warn('Rigid diaphragms and base isolation are both on; the isolation level itself has no diaphragm.');
   }
-  if (s.useDampers && !dampers.length) {
+  if (dampersOn(s) && !dampers.length) {
     warn('No dampers were placed — check the frame line, bay and story selectors.');
   }
-  if (s.useDampers && s.damperConfig === 'chevron') {
+  if (dampersOn(s) && s.damperConfig === 'chevron') {
     warn(`Chevron dampers split ${elements.filter((e) => e.splitSibling).length} beams at midspan, so those beams are two elements each.`);
+  }
+  // The solver stack, measured against openseespy. None of these is refused -
+  // each runs - but each gives a result that is wrong, or stops where it need not.
+  const nonlinearSection = usesFibers(s) && !(s.sectionKind === 'NDFiber' && s.ndMaterial === 'ElasticIsotropic');
+  const positiveDefinite = ['BandSPD', 'ProfileSPD', 'SparseSYM'].includes(s.systemCmd);
+  if (s.systemCmd === 'Diagonal') {
+    warn('system Diagonal solves only the diagonal of the matrix. It is meant for explicit analyses '
+      + 'with a lumped mass; for this frame the static results will not be in equilibrium and '
+      + 'Newton will not converge.');
+  }
+  if (s.systemCmd === 'SparseSYM' && (s.runModal || s.runTimeHistory)) {
+    warn('With system SparseSYM the eigenvalue analysis returns wrong eigenvalues for this model. '
+      + 'Modal results and the Rayleigh damping of the time history depend on it; use BandGeneral '
+      + 'or UmfPack for them.');
+  }
+  if (positiveDefinite && s.constraintsCmd === 'Lagrange') {
+    warn('Lagrange multipliers make the matrix indefinite; BandSPD, ProfileSPD and SparseSYM need '
+      + 'it positive definite and will stop at the first step.');
+  }
+  if (s.systemCmd === 'BandSPD' && nonlinearSection && s.runPushover) {
+    warn('BandSPD fails once the section softens; the pushover may stop early. BandGeneral or '
+      + 'UmfPack carry it further.');
+  }
+  if (s.testCmd === 'FixedNumIter') {
+    warn('test FixedNumIter runs a fixed number of iterations and accepts the step whether or not '
+      + 'it converged; nothing will say when the model has lost equilibrium.');
+  }
+  if (s.algorithmCmd === 'Linear' && nonlinearSection) {
+    warn('algorithm Linear takes one solve per step and never checks equilibrium. With a nonlinear '
+      + 'section the results can run on past the point where the model has actually lost convergence.');
   }
   if (s.massSource === 'none' && !s.elementMass && (s.runModal || s.runTimeHistory)) {
     critical('No mass is defined anywhere, so the eigenvalue analysis cannot run. Enable nodal mass or element mass.');

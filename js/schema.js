@@ -22,7 +22,7 @@ import { UNIT_SYSTEMS } from './units.js';
 import { CONCRETE_MODELS, STEEL_MODELS, modelsOf, matKey } from './model/materials.js';
 import {
   ISOLATOR_TYPES, DAMPER_TYPES, FRICTION_MODELS, catalogueOf, devKey,
-  ISOLATION_ENABLED, isolationOn,
+  ISOLATION_ENABLED, isolationOn, DAMPERS_ENABLED, dampersOn,
 } from './model/devices.js';
 
 const systemOptions = Object.entries(UNIT_SYSTEMS).map(([value, u]) => ({ value, label: u.label }));
@@ -45,7 +45,7 @@ const fiberBased = (s) => usesFibers(s);
 const usesUniaxial = (s) => s.sectionKind === 'Fiber' || s.sectionKind === 'RCCircularSection';
 
 const usesIso      = (s) => isolationOn(s);
-const usesDampers  = (s) => !!s.useDampers;
+const usesDampers  = (s) => dampersOn(s);
 const usesFriction = (s) => usesIso(s) && !!ISOLATOR_TYPES[s.isolatorType]?.friction;
 const usesAux      = (s) => usesIso(s) && !!ISOLATOR_TYPES[s.isolatorType]?.aux;
 
@@ -59,7 +59,7 @@ export const SCHEMA = [
       {
         id: 'unitSystem', type: 'select', label: 'Unit system', options: systemOptions,
         d: 'kN-m',
-        hint: 'OpenSees is unit agnostic — changing this resets unit-dependent defaults.',
+        hint: 'OpenSees is unit agnostic. Changing this converts every value to the new units — 1000 mm becomes 1 m.',
       },
       { id: 'gravityAccel', type: 'number', gt: 0, label: 'Gravity g', unit: 'accel', step: 0.01,
         d: { 'kN-m': 9.81, 'N-mm': 9810, 'kip-in': 386.1 },
@@ -341,7 +341,7 @@ export const SCHEMA = [
   {
     id: 'devices', title: 'Isolators & Dampers',
     fields: [
-      { kind: 'sub', label: 'Base isolation' },
+      { kind: 'sub', label: 'Base isolation', showIf: () => ISOLATION_ENABLED },
       { id: 'useIsolation', type: 'check', d: false, label: 'Insert a base isolation layer',
         showIf: () => ISOLATION_ENABLED,
         hint: 'Adds a foundation node under every column and an isolator between it and the superstructure.' },
@@ -374,8 +374,9 @@ export const SCHEMA = [
         label: 'Include bearings in Rayleigh damping',
         hint: 'Off by default — bearings otherwise leak artificial viscous damping into the isolation system.' },
 
-      { kind: 'sub', label: 'Dampers' },
+      { kind: 'sub', label: 'Dampers', showIf: () => DAMPERS_ENABLED },
       { id: 'useDampers', type: 'check', d: false, label: 'Add diagonal dampers',
+        showIf: () => DAMPERS_ENABLED,
         hint: 'Placed as twoNodeLink devices acting along their own axis.' },
       { id: 'damperType', type: 'select', label: 'Device', d: 'ViscousDamper',
         showIf: usesDampers, options: modelOptions(DAMPER_TYPES) },
@@ -444,21 +445,33 @@ export const SCHEMA = [
       { id: 'systemCmd', type: 'select', label: 'system', d: 'BandGeneral', options: opts(
         'BandGeneral', 'BandSPD', 'ProfileSPD', 'SuperLU', 'UmfPack', 'FullGeneral', 'SparseSYM',
         'Diagonal', 'PFEM', 'PythonSparse'),
-        hint: 'PFEM needs a matching analysis type. PythonSparse solves in Python: the script '
-          + 'carries a SciPy solver object, so it also needs numpy and scipy installed.' },
+        hint: 'PythonSparse solves in Python: the script carries a SciPy solver object, so it '
+          + 'also needs numpy and scipy installed.' },
       { id: 'testCmd', type: 'select', label: 'test', d: 'NormDispIncr', options: opts(
         'NormUnbalance', 'NormDispIncr', 'EnergyIncr',
         'RelativeNormUnbalance', 'RelativeNormDispIncr', 'RelativeTotalNormDispIncr', 'RelativeEnergyIncr',
         'FixedNumIter', 'NormDispAndUnbalance', 'NormDispOrUnbalance') },
-      // The convergence test measures a displacement increment, so the tolerance
-      // is a length and has to follow the unit system. A metre-based default of
+      // The default test measures a displacement increment, so the tolerance is
+      // a length and has to follow the unit system. A metre-based default of
       // 1e-8 is ten nanometres — a bar a nonlinear section can never clear, and
       // the run stalls at a norm of about 1e-6 until the iteration limit.
+      // FixedNumIter reads no tolerance, but forceBeamColumn does, for its own
+      // iterations, so the field hides only when neither is there to read it.
       { id: 'tol', type: 'number', gt: 0, label: 'Tolerance', step: 1e-9, half: true,
         d: { 'kN-m': 1e-6, 'N-mm': 1e-3, 'kip-in': 1e-5 },
-        hint: 'What the test above must reach. NormDispIncr and NormUnbalance measure a '
-            + 'displacement increment, so this is a length in the current unit system; '
-            + 'EnergyIncr measures work. Too tight and a nonlinear model never converges.' },
+        showIf: (s) => s.testCmd !== 'FixedNumIter'
+          || s.colElement === 'forceBeamColumn' || s.beamElement === 'forceBeamColumn',
+        hint: 'What the test above must reach. The Disp tests measure a displacement increment '
+            + '(a length in the current units), the Unbalance tests the unbalanced force, the '
+            + 'Energy tests work. forceBeamColumn elements also use it for their own iterations. '
+            + 'Too tight and a nonlinear model never converges.' },
+      // The two combined tests check the unbalanced force as well as the
+      // displacement increment, and take a tolerance for each.
+      { id: 'tolForce', type: 'number', gt: 0, label: 'Force tolerance', unit: 'force', step: 1e-4, half: true,
+        d: { 'kN-m': 1e-3, 'N-mm': 1, 'kip-in': 2.248089e-4 },
+        showIf: (s) => s.testCmd === 'NormDispAndUnbalance' || s.testCmd === 'NormDispOrUnbalance',
+        hint: 'What the norm of the unbalanced force must reach. NormDispAndUnbalance needs both '
+            + 'this and the tolerance above; NormDispOrUnbalance is satisfied by either.' },
       { id: 'maxIter', type: 'number', label: 'Max iterations', d: 100, min: 1, max: 5000, step: 1, half: true },
       { id: 'algorithmCmd', type: 'select', label: 'algorithm', d: 'Newton', options: opts(
         'Linear', 'Newton', 'NewtonLineSearch', 'ModifiedNewton', 'KrylovNewton',
@@ -507,9 +520,13 @@ export const SCHEMA = [
       { id: 'gmScale', type: 'number', gt: 0, label: 'Scale factor', d: 1.0, step: 0.05, half: true,
         showIf: (s) => s.runTimeHistory,
         hint: 'Multiplied by g, so a record in units of g needs no further conversion.' },
+      // CentralDifference and ExplicitDifference are left out until the time
+      // history can give them what explicit integration needs: the Linear
+      // algorithm, mass on every degree of freedom and a step below the
+      // critical one. Without these both stop at their first step.
       { id: 'thIntegrator', type: 'select', label: 'Transient integrator', d: 'Newmark',
         showIf: (s) => s.runTimeHistory, options: opts(
-          'Newmark', 'HHT', 'GeneralizedAlpha', 'TRBDF2', 'CentralDifference', 'ExplicitDifference') },
+          'Newmark', 'HHT', 'GeneralizedAlpha', 'TRBDF2') },
       { id: 'newmarkGamma', type: 'number', label: 'Newmark γ', d: 0.5, step: 0.05, half: true,
         showIf: (s) => s.runTimeHistory && s.thIntegrator === 'Newmark' },
       { id: 'newmarkBeta', type: 'number', label: 'Newmark β', d: 0.25, step: 0.05, half: true,
@@ -553,14 +570,19 @@ function pushoverFields(shown, p) {
       { value: '1', label: 'DOF 1 — global X' },
       { value: '2', label: 'DOF 2 — global Y' },
     ]},
-    { id: `${p}Node`, type: 'select', label: 'Control node', d: 'centre', showIf: shown, options: [
-      { value: 'centre', label: 'Roof — nearest plan centre' },
-      { value: 'corner', label: 'Roof — origin corner' },
-    ]},
+    // Under rigid diaphragms the roof master is controlled whatever is chosen
+    // here, since a joint tied to it cannot be.
+    { id: `${p}Node`, type: 'select', label: 'Control node', d: 'centre',
+      showIf: (s) => shown(s) && !s.rigidDiaphragm, options: [
+        { value: 'centre', label: 'Roof — nearest plan centre' },
+        { value: 'corner', label: 'Roof — origin corner' },
+      ]},
+    { kind: 'note-line', showIf: (s) => shown(s) && !!s.rigidDiaphragm,
+      label: 'With rigid diaphragms the floor master node is controlled.' },
     { id: `${p}Shape`, type: 'select', label: 'Lateral load pattern', d: 'triangular', showIf: shown, options: [
       { value: 'triangular', label: 'Inverted triangular — mass × height' },
       { value: 'uniform', label: 'Uniform — mass proportional' },
-      { value: 'modal', label: 'First mode — from the eigenvectors' },
+      { value: 'modal', label: 'Dominant mode — the mode with the largest mass in the push direction' },
     ]},
     { id: `${p}Drift`, type: 'number', gt: 0, label: 'Target roof drift ratio', d: 0.02, step: 0.005,
       half: true, showIf: shown },

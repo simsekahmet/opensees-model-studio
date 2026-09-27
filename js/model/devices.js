@@ -327,6 +327,20 @@ export const ISOLATION_ENABLED = false;
 /** Whether this model has an isolation layer — the one place that decides it. */
 export const isolationOn = (s) => ISOLATION_ENABLED && !!s.useIsolation;
 
+/**
+ * Dampers are switched off for now, in the same way. The audit found the
+ * damping coefficient's per-unit defaults converted as if it were a plain
+ * force, when it is a force per velocity to the power α — so the same damper
+ * started in N-mm came out 31.6 times stronger than in kN-m, and the oil damper
+ * a thousand times. The code, the catalogue and its tests stay; turning this
+ * back to true restores them. A saved project that asks for dampers builds
+ * without them.
+ */
+export const DAMPERS_ENABLED = false;
+
+/** Whether this model has dampers — the one place that decides it. */
+export const dampersOn = (s) => DAMPERS_ENABLED && !!s.useDampers;
+
 export function catalogueOf(group) {
   return { iso: ISOLATOR_TYPES, damp: DAMPER_TYPES, frn: FRICTION_MODELS }[group];
 }

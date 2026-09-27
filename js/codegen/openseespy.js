@@ -15,6 +15,7 @@ import { usesFibers, editedSectionGroups } from '../model/sections.js';
 import { scriptFileName } from '../model/groundmotion.js';
 import {
   ISOLATOR_TYPES, DAMPER_TYPES, FRICTION_MODELS, devKey, devConst, isolationOn,
+  dampersOn,
 } from '../model/devices.js';
 
 /* Fixed tag constants, mirrored in the generated script. */
@@ -131,7 +132,7 @@ export function generateScript(s, model, gm = null) {
   const fiber = usesFibers(s);
   const steelSystem = s.matSystem === 'steel';
   const isolated = isolationOn(s);
-  const chevron = !!s.useDampers && s.damperConfig === 'chevron';
+  const chevron = dampersOn(s) && s.damperConfig === 'chevron';
   const isoH = isolated ? Number(s.isolatorHeight) || 0 : 0;
   const pySparse = s.systemCmd === 'PythonSparse';
 
@@ -658,7 +659,7 @@ export function generateScript(s, model, gm = null) {
 
   emitSlabs(w, s, model, u);
 
-  if (isolated || s.useDampers) emitDevices(w, s, model, u, isolated);
+  if (isolated || dampersOn(s)) emitDevices(w, s, model, u, isolated);
 
   /* ──────────────────────────────── loads ──────────────────────────── */
   rule(`${needInt ? 9 : 8} — Gravity loads`);
@@ -711,16 +712,32 @@ export function generateScript(s, model, gm = null) {
     '            add_load(beam_y_tag(level, i + 1, j), w_y)',
     '',
     ...loadEditLines(model),
-    "ops.timeSeries('Linear', 1)",
-    "ops.pattern('Plain', 1, 1)",
-    '',
-    '# Slab load — acts along −local y, which the transformation puts vertical.',
-    'for tag, w in beam_load.items():',
-    "    ops.eleLoad('-ele', tag, '-type', '-beamUniform', -w, 0.0)",
-    ''
   );
 
-  if (s.selfWeight) {
+  // Without the gravity analysis the pattern would still be in the domain, on
+  // a Linear series that nothing holds constant: every later analysis would go
+  // on scaling it - by the time of the time history, which carried ten times
+  // its own weight at ten seconds, and by the load factor of a pushover.
+  if (!s.runGravity) {
+    w(
+      '# The gravity analysis is off, so none of the loads above is applied. Left',
+      '# in the domain, their pattern would be scaled by the time of every later',
+      '# analysis.',
+      ''
+    );
+  } else {
+    w(
+      "ops.timeSeries('Linear', 1)",
+      "ops.pattern('Plain', 1, 1)",
+      '',
+      '# Slab load — acts along −local y, which the transformation puts vertical.',
+      'for tag, w in beam_load.items():',
+      "    ops.eleLoad('-ele', tag, '-type', '-beamUniform', -w, 0.0)",
+      ''
+    );
+  }
+
+  if (s.selfWeight && s.runGravity) {
     w(
       '# Member self weight',
       'W_COL, W_BX = RHO * G_ACC * COL_A, RHO * G_ACC * BX_A',
@@ -952,7 +969,7 @@ function emitDevices(w, s, model, u, isolated) {
     );
   }
 
-  if (s.useDampers) {
+  if (dampersOn(s)) {
     const def = DAMPER_TYPES[s.damperType];
     const dampers = model.elements.filter((e) => e.kind === 'damper');
 
@@ -1414,6 +1431,18 @@ function emitPythonSparseSolver(w) {
   );
 }
 
+/**
+ * The two tests that check the displacement increment and the unbalanced
+ * force together take a tolerance for each; FixedNumIter takes none, only the
+ * number of iterations. Written the way the other seven are, OpenSees reads
+ * the wrong numbers into them: FixedNumIter stops the script, and the two
+ * combined tests print a warning, are never set, and the analysis goes on
+ * under a test nobody chose.
+ */
+const twoTolerances = (s) => s.testCmd === 'NormDispAndUnbalance' || s.testCmd === 'NormDispOrUnbalance';
+const testArgs = (s) => (s.testCmd === 'FixedNumIter' ? 'MAX_ITER, 0'
+  : twoTolerances(s) ? 'TOL, TOL_FORCE, MAX_ITER, 0' : 'TOL, MAX_ITER, 0');
+
 /** The solver stack, set once and reused by every case below. */
 function emitSolutionStrategy(w, s) {
   const extra = s.constraintsCmd === 'Penalty' ? ', PENALTY_A, PENALTY_A'
@@ -1429,12 +1458,13 @@ function emitSolutionStrategy(w, s) {
   w('# Solver stack — shared by every case below.');
   if (s.constraintsCmd === 'Penalty') w(`PENALTY_A = ${pf(s.penaltyAlpha)}`);
   if (s.constraintsCmd === 'Lagrange') w(`LAGRANGE_A = ${pf(s.lagrangeAlpha)}`);
+  if (twoTolerances(s)) w(`TOL_FORCE = ${pf(s.tolForce)}`);
   w(
     'def set_solver():',
     `    ops.constraints(${py(s.constraintsCmd)}${extra})`,
     `    ops.numberer(${py(s.numbererCmd)})`,
     `    ${systemCall}`,
-    `    ops.test(${py(s.testCmd)}, TOL, MAX_ITER, 0)`,
+    `    ops.test(${py(s.testCmd)}, ${testArgs(s)})`,
     `    ops.algorithm(${py(s.algorithmCmd)})`,
     '',
     ''
@@ -1602,13 +1632,20 @@ function emitLateral(w, s, model, p, cyclic) {
   const shape = s[`${p}Shape`];
   const centre = s[`${p}Node`] === 'centre';
   const P = p.toUpperCase();
+  // Under a rigid diaphragm every roof joint is tied to the floor master, and
+  // the Transformation handler takes a tied joint's lateral freedoms out of the
+  // equations: DisplacementControl then has nothing to control. The pushover
+  // stopped at its first step, the cyclic run at its first drift, and from the
+  // corner joint the pushover ran on to a roof displacement of sixteen metres.
+  const controlNode = s.rigidDiaphragm ? 'master_tag(N_Z)  # the roof master: tied joints cannot be controlled'
+    : `node_tag(N_Z, ${centre ? 'NX_N // 2, NY_N // 2' : '0, 0'})`;
 
   w(
     `# ── ${title} ${'─'.repeat(68 - title.length)}`,
     `${P}_DOF    = ${pi(dof)}`,
     `${P}_DRIFT  = ${pf(s[`${p}Drift`])}  # of the total building height`,
     `${P}_STEPS  = ${pi(s[`${p}Steps`])}`,
-    `${P}_NODE   = node_tag(N_Z, ${centre ? 'NX_N // 2, NY_N // 2' : '0, 0'})`,
+    `${P}_NODE   = ${controlNode}`,
     `${P}_TARGET = ${P}_DRIFT * Z[-1]`,
     ''
   );
@@ -1616,9 +1653,31 @@ function emitLateral(w, s, model, p, cyclic) {
   // Lateral load pattern.
   w(`# Lateral pattern — ${shape}`);
   if (shape === 'modal') {
+    // Mode 1 need not lie in the push direction: in a frame weaker the other
+    // way it does not, its components along the push are near zero, and so is
+    // the load - the pushover stopped at its first step. The pattern follows
+    // the mode with the largest effective mass along the push instead.
     w(
-      `if not ops.eigen('-genBandArpack', 1):`,
-      `    raise RuntimeError('The first mode is needed for a modal load pattern.')`
+      '# The analysis the modal step left behind is cleared first: without',
+      '# gravity, eigen finds no eigen solver on it.',
+      'ops.wipeAnalysis()',
+      'PATTERN_MODES = 6',
+      `if not ops.eigen('-genBandArpack', PATTERN_MODES):`,
+      `    raise RuntimeError('The modes are needed for a modal load pattern.')`,
+      '',
+      '',
+      '# Share of the mass a mode moves along one DOF: (sum m*phi)^2 / sum m*phi^2.',
+      'def effective_share(mode, dof):',
+      '    along, total = 0.0, 0.0',
+      '    for node in ops.getNodeTags():',
+      '        along += ops.nodeMass(node, dof) * ops.nodeEigenvector(node, mode, dof)',
+      '        for d in range(1, len(ops.nodeDisp(node)) + 1):',
+      '            total += ops.nodeMass(node, d) * ops.nodeEigenvector(node, mode, d) ** 2',
+      '    return along * along / total if total > 0.0 else 0.0',
+      '',
+      '',
+      `${P}_MODE = max(range(1, PATTERN_MODES + 1), key=lambda n: effective_share(n, ${P}_DOF))`,
+      `print(f'${title} load pattern follows mode {${P}_MODE}, the one with the most mass along DOF {${P}_DOF}.')`,
     );
   }
   w(
@@ -1631,7 +1690,7 @@ function emitLateral(w, s, model, p, cyclic) {
     '            m = ops.nodeMass(tag, 1)',
     shape === 'triangular' ? '            f = m * Z[level]'
       : shape === 'uniform' ? '            f = m'
-      : `            f = m * ops.nodeEigenvector(tag, 1, ${P}_DOF)`,
+      : `            f = m * ops.nodeEigenvector(tag, ${P}_MODE, ${P}_DOF)`,
     `            load = [0.0] * 6`,
     `            load[${P}_DOF - 1] = f`,
     '            ops.load(tag, *load)',
@@ -1659,7 +1718,7 @@ function emitLateral(w, s, model, p, cyclic) {
         `write_table('pushover.out', ${P}_CURVE,`,
         "            ['roof_disp', 'base_shear', 'iterations'], 'capacity')",
         `RESULTS['cases']['pushover'] = {`,
-        `    'controlNode': ${P}_NODE, 'dof': ${P}_DOF,`,
+        `    'controlNode': ${P}_NODE, 'dof': ${P}_DOF,${shape === 'modal' ? ` 'patternMode': ${P}_MODE,` : ''}`,
         `    'height': Z[-1], 'targetDrift': ${P}_DRIFT, 'steps': len(${P}_CURVE),`,
         '}',
       ] : [
@@ -1716,7 +1775,7 @@ function emitLateral(w, s, model, p, cyclic) {
       `write_table('cyclic.out', ${P}_CURVE,`,
       "            ['roof_disp', 'base_shear', 'iterations'], 'hysteresis')",
       `RESULTS['cases']['cyclic'] = {`,
-      `    'controlNode': ${P}_NODE, 'dof': ${P}_DOF, 'height': Z[-1],`,
+      `    'controlNode': ${P}_NODE, 'dof': ${P}_DOF, 'height': Z[-1],${shape === 'modal' ? ` 'patternMode': ${P}_MODE,` : ''}`,
       `    'amplitudes': list(${P}_AMPS), 'repeats': ${P}_REPEATS, 'steps': len(${P}_CURVE),`,
       '}',
       '',
@@ -1742,6 +1801,12 @@ function emitTimeHistory(w, s, model, gm) {
     '',
     'if not os.path.exists(GM_FILE):',
     "    raise FileNotFoundError(f'Ground motion file {GM_FILE!r} was not found.')",
+    '',
+    '# Whatever ran before this - gravity, the restored gravity state or the modal',
+    '# step - has left an analysis behind. Over a static one OpenSees refuses a',
+    '# transient integrator and quietly puts Newmark 0.5/0.25 in its place, and',
+    '# without gravity the eigen call below finds no eigen solver. Start clean.',
+    'ops.wipeAnalysis()',
     '',
     '# Rayleigh damping anchored on two modes.',
     `DAMP_RATIO = ${pf(s.dampRatio)}`,
@@ -1805,8 +1870,10 @@ function transientIntegrator(s) {
       return `ops.integrator('Newmark', ${pf(s.newmarkGamma)}, ${pf(s.newmarkBeta)})`;
     case 'HHT':
       return `ops.integrator('HHT', ${pf(s.hhtAlpha)})`;
+    // Unconditionally stable only for αM ≥ αF ≥ 0.5; written the other way
+    // round, as αF = α + 0.05, the run diverges within two seconds.
     case 'GeneralizedAlpha':
-      return `ops.integrator('GeneralizedAlpha', ${pf(s.hhtAlpha)}, ${pf(Math.min(1, Number(s.hhtAlpha) + 0.05))})`;
+      return `ops.integrator('GeneralizedAlpha', ${pf(Math.min(1, Number(s.hhtAlpha) + 0.05))}, ${pf(s.hhtAlpha)})`;
     case 'TRBDF2':
       return "ops.integrator('TRBDF2')";
     case 'CentralDifference':

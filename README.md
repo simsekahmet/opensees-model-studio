@@ -179,6 +179,7 @@ tests/
   run_variants.py    runs them against real openseespy
   equilibrium.py     statics check: reactions against the applied gravity
   isolation.py       one analysis must not inherit another's state
+  analyses.py        each analysis must run the way it was asked to
   results.py         end-to-end check of the result pipeline
   fuzz.mjs, fuzz.py  every option drawn at random, together, and run
 ```
@@ -224,12 +225,12 @@ npm test
 `generate.mjs` imports the app's own builder and code generator — the same
 modules the browser loads — and writes one script per variant. They walk the
 catalogues rather than a hard-coded list, so every offered material model,
-damper, element, transformation, solver option and analysis case is covered —
+element, transformation, solver option and analysis case is covered —
 the time history included, run against a synthetic record — along with moved
 joints and edited members. `run_variants.py` then runs each one against a real
 `openseespy`.
 
-The last run on Python 3.12: **95 variants, 95 completed, 0 did not converge,
+The last run on Python 3.12: **91 variants, 91 completed, 0 did not converge,
 0 script errors.**
 
 Variants change one option at a time, which is exactly why they cannot see a
@@ -238,7 +239,10 @@ toggle at random, together, from a fixed seed, and `fuzz.py` runs what it
 writes: a combination may fail to finish, but one that finishes must balance,
 must not report a period of zero, and must not print a message from a defect
 that has already been fixed. `npm test` runs sixty; `npm run fuzz` runs four
-hundred.
+hundred. The combinations listed under *Known limits* below finish with
+results that are wrong for a reason already understood; they are listed and
+counted on every run, never failed — unless a fixed defect's message turns
+up in them.
 
 `roundtrip.mjs` sends a model with hand edits out through the script, the
 notebook and the project file and reads all three back, field by field: `Load
@@ -246,9 +250,21 @@ model file` is only a promise if every format survives the trip.
 
 `equilibrium.py` closes statics end to end: the sum of the vertical base
 reactions the solver reports is compared against the gravity load the builder
-applied — for a fixed base, a column line moved in plan, and chevron dampers,
-whose split beams once carried load on one half only. All of them balance to
-within the recorder's own output precision.
+applied — for a fixed base and a column line moved in plan, and, while dampers
+are switched on, for chevron dampers, whose split beams once carried load on
+one half only. All of them balance to within the recorder's own output
+precision.
+
+`analyses.py` checks what finishing without an error cannot: that each
+analysis did what it was asked. Two defects hid there. The time history was
+set up over the static analysis gravity left behind, so OpenSees refused the
+chosen integrator and put Newmark 0.5/0.25 in its place — HHT, generalized
+alpha and TRBDF2 all gave the default's numbers to the last digit. And under
+rigid diaphragms the pushover and the cyclic run controlled a joint tied to
+the floor master, which the Transformation handler takes out of the
+equations. Each integrator is now held to differing from Newmark, each lateral
+case to reaching its target, and a model with the gravity analysis off to
+carrying no gravity load at all.
 
 Some documented entries are deliberately not offered, because verification
 showed they cannot run. `RambergOsgoodSteel` and `FRPConfinedConcrete` make
@@ -271,6 +287,11 @@ opens with that choice back on its default:
 - `multipleShearSpring` and `YamamotoBiaxialHDR` carry shear only, so the
   isolation level has no vertical stiffness and gravity does not converge.
 
+`CentralDifference` and `ExplicitDifference` are left out of the time history
+until it can give them what explicit integration needs — the Linear algorithm,
+mass on every degree of freedom and a step below the critical one. Without
+these both stop at their first step.
+
 `MUMPS`, `ParallelPlain` and `ParallelRCM` belong to the parallel builds of
 OpenSees and are not in openseespy, so they are not offered either.
 
@@ -278,6 +299,26 @@ OpenSees and are not in openseespy, so they are not offered either.
 withdrawn and the layer still being checked, it is out of the form and out of
 the model; its code, catalogue and tests stay, and `ISOLATION_ENABLED` in
 `js/model/devices.js` turns it back on.
+
+**Dampers are switched off for now,** in the same way. The per-unit defaults
+of the damping coefficient were converted as if it were a plain force, when it
+is a force per velocity to the power α: the same damper started in N-mm came
+out 31.6 times stronger than in kN-m, and the oil damper a thousand times.
+`DAMPERS_ENABLED` in the same file turns them back on.
+
+### Known limits
+
+- A **free** base has no supports: under gravity no equilibrium exists, and
+  any convergence the analysis reports is false, whichever solver reports it.
+- A **roller** base is a mechanism sideways. The `Linear` algorithm, the
+  `Diagonal` system and the `FixedNumIter` test never check equilibrium, so
+  with one of them the run finishes and its results do not balance.
+
+The studio warns about both, and about the solver combinations measured to
+give wrong results or to stop early: the `Diagonal` system, `SparseSYM` with
+an eigenvalue analysis, `BandSPD`, `ProfileSPD` and `SparseSYM` with
+Lagrange multipliers, `BandSPD` with a softening section in a pushover, the
+`Linear` algorithm with a nonlinear section, and the `FixedNumIter` test.
 
 ## Running the generated script
 

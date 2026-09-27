@@ -89,6 +89,11 @@ export function renderForm(root, onDirty) {
       r.input.classList.toggle('is-invalid', !!error);
       r.input.setAttribute('aria-invalid', error ? 'true' : 'false');
     }
+    // A row of two half fields hides with them; left showing, an empty row
+    // would keep an otherwise empty group on screen.
+    for (const row of root.querySelectorAll('.field-row')) {
+      row.hidden = ![...row.children].some((c) => !c.hidden);
+    }
     // Empty groups (all fields hidden) collapse out of the way.
     for (const g of root.querySelectorAll('.group')) {
       const body = g.querySelector('.group-body');

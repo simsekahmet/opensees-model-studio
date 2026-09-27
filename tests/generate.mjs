@@ -27,7 +27,9 @@ const { defaultsFor } = await import('../js/state.js');
 const { buildModel } = await import('../js/model/builder.js');
 const { generateScript } = await import('../js/codegen/openseespy.js');
 const { CONCRETE_MODELS, STEEL_MODELS } = await import('../js/model/materials.js');
-const { ISOLATOR_TYPES, DAMPER_TYPES, FRICTION_MODELS, ISOLATION_ENABLED } = await import('../js/model/devices.js');
+const {
+  ISOLATOR_TYPES, DAMPER_TYPES, FRICTION_MODELS, ISOLATION_ENABLED, DAMPERS_ENABLED,
+} = await import('../js/model/devices.js');
 
 const base = defaultsFor('kN-m');
 
@@ -86,14 +88,19 @@ if (ISOLATION_ENABLED) {
     add(`friction-${frictionType}`, { useIsolation: true, isolatorType: 'singleFPBearing', frictionType });
   }
 }
-for (const damperType of offered(DAMPER_TYPES)) {
-  add(`damper-${damperType}`, { useDampers: true, damperType });
+// Dampers are switched off in the same way (see DAMPERS_ENABLED).
+if (DAMPERS_ENABLED) {
+  for (const damperType of offered(DAMPER_TYPES)) {
+    add(`damper-${damperType}`, { useDampers: true, damperType });
+  }
+  for (const damperConfig of ['diagonal', 'chevron']) {
+    add(`damper-config-${damperConfig}`, { useDampers: true, damperConfig });
+  }
 }
-for (const damperConfig of ['diagonal', 'chevron']) {
-  add(`damper-config-${damperConfig}`, { useDampers: true, damperConfig });
+if (ISOLATION_ENABLED && DAMPERS_ENABLED) {
+  add('isolation-and-dampers', { useIsolation: true, useDampers: true, useRecorders: true });
 }
 if (ISOLATION_ENABLED) {
-  add('isolation-and-dampers', { useIsolation: true, useDampers: true, useRecorders: true });
   add('isolation-partial', { useIsolation: true, isolatorPlacement: 'perimeter', useRecorders: true });
 }
 
@@ -106,8 +113,25 @@ const TH = { runTimeHistory: true, useRecorders: true, gmDt: 0.01 };
 for (const thIntegrator of ['Newmark', 'HHT', 'GeneralizedAlpha', 'TRBDF2']) {
   add(`time-history-${thIntegrator}`, { ...TH, thIntegrator });
 }
-add('time-history-dampers', { ...TH, useDampers: true });
+if (DAMPERS_ENABLED) add('time-history-dampers', { ...TH, useDampers: true });
 add('time-history-after-pushover', { ...TH, runPushover: true });
+// Without gravity the modal step's eigen call left an analysis behind, and the
+// time history's own eigen call then found no eigen solver on it.
+add('time-history-no-gravity', { ...TH, runGravity: false });
+
+/* ── rigid diaphragms under displacement control ─────────────────────
+   The control joint used to be one tied to the floor master, which the
+   Transformation handler takes out of the equations. tests/analyses.py holds
+   both lateral cases to reaching their targets. */
+add('diaphragm-pushover-cyclic', { rigidDiaphragm: true, runPushover: true, runCyclic: true, useRecorders: true });
+add('diaphragm-pushover-corner', { rigidDiaphragm: true, runPushover: true, pushNode: 'corner', useRecorders: true });
+
+/* ── the modal load pattern ──────────────────────────────────────────
+   The frame is weaker along Y, so its first mode is a Y translation. The
+   pattern used to follow mode 1 whatever the push direction, and pushing along
+   X it put almost no load on anything. */
+add('pushover-dominant-mode', { runPushover: true, pushShape: 'modal', useRecorders: true });
+add('cyclic-dominant-mode-no-gravity', { runGravity: false, runCyclic: true, cycShape: 'modal', useRecorders: true });
 
 /* ── options that used to point at things that were never built ────── */
 // An elastic section never had an aggregator, but members pointed at one.

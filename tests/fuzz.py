@@ -48,7 +48,35 @@ FIXED = {
     "no Numberer specified": "a parallel-only numberer",
     "incorrect # args": "'-doRayleigh' on a bearing that does not take it",
     "math domain error": "Rayleigh damping anchored on a non-positive eigenvalue",
+    "failed to read int values": "FixedNumIter handed a tolerance where it takes an iteration count",
+    "failed to get max iter": "NormDispAndUnbalance written with one tolerance instead of two",
+    "NormDispOrUnbalance insufficient arguments": "NormDispOrUnbalance written with one tolerance instead of two",
+    "can't set transient integrator": "the time history set up over the static analysis gravity left, "
+                                      "so OpenSees put Newmark 0.5/0.25 in place of the chosen integrator",
+    "no EigenSOE has been set": "an eigen call without gravity - the time history's, or the modal load "
+                                "pattern's - over the analysis the modal step left",
 }
+
+# Known limits: combinations whose results are wrong for a reason that is
+# understood and was left in place on purpose (see README). A free base has no
+# supports at all: under gravity no equilibrium exists, and whatever convergence
+# the analysis reports is false, whichever solver reports it. A roller base is
+# a mechanism sideways, and nonsense only when solved by something that never
+# checks equilibrium. These are listed and counted every run, never failed -
+# but the message of a fixed defect is a failure here as anywhere.
+UNCHECKED = (("algorithmCmd", "Linear", "algorithm Linear"),
+             ("systemCmd", "Diagonal", "system Diagonal"),
+             ("testCmd", "FixedNumIter", "test FixedNumIter"))
+
+
+def known_limit(choices: dict) -> str | None:
+    base = choices.get("baseFixity")
+    if base == "Free":
+        return "Free base, which has no supports"
+    if base != "Roller":
+        return None
+    why = [label for key, value, label in UNCHECKED if choices.get(key) == value]
+    return f"{base} base with {' and '.join(why)}" if why else None
 CONVERGENCE = ("failed to converge", "did not converge", "could not be restored",
                "non-positive eigenvalue")
 
@@ -104,20 +132,28 @@ def main() -> int:
         counts[r["status"]] = counts.get(r["status"], 0) + 1
     print("  " + " | ".join(f"{v} {k}" for k, v in sorted(counts.items())))
 
-    failures = 0
+    choices = {e["name"]: e.get("choices", {}) for e in runnable}
+    failures = known = 0
     for r in results:
-        problems = list(r.get("regressions", []))
+        regressions = list(r.get("regressions", []))
+        problems = []
         if r.get("statics", 0.0) > STATICS:
             problems.append(f"does not balance: {r['statics']:.3%} off the applied gravity")
         if r.get("zeroPeriod"):
             problems.append("a mode is reported with a period of zero")
-        if problems:
+        limit = known_limit(choices.get(r["name"], {}))
+        if problems and limit and not regressions:
+            known += 1
+            print(f"  KNOWN {r['name']}: {limit} - " + "; ".join(problems))
+        elif problems or regressions:
             failures += 1
-            print(f"  FAIL {r['name']}: " + "; ".join(problems))
+            print(f"  FAIL {r['name']}: " + "; ".join(regressions + problems))
 
-    balanced = [r for r in results if "statics" in r]
+    balanced = [r for r in results if "statics" in r and not known_limit(choices.get(r["name"], {}))]
     print(f"\n  {len(balanced)} completed runs checked for statics, "
           f"worst {max((r['statics'] for r in balanced), default=0.0):.2e}")
+    if known:
+        print(f"  {known} known limit{'s' if known > 1 else ''} listed above, not counted as failures")
     print("\nNo regressions, every completed run balances." if not failures
           else f"\n{failures} run{'s' if failures > 1 else ''} failed.")
     return 1 if failures else 0

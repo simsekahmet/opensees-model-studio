@@ -4,6 +4,101 @@ All notable changes to OpenSees Model Studio are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [semantic versioning](https://semver.org/).
 
+## [2.1.0] — 2026-09-27
+
+Every option left open after 2.0.0 was measured against a reference solution of
+the same model instead of being run on its own, and the comparison found what a
+script that finishes without an error cannot show: analyses that ran, but not
+the analysis that was asked for.
+
+### Fixed — results that were wrong without an error
+
+- **The time history uses the integrator chosen.** It was set up over the
+  static analysis gravity had left behind, so OpenSees refused the integrator
+  and put Newmark 0.5/0.25 in its place: HHT, generalized alpha, TRBDF2 and any
+  Newmark γ, β gave the default's base shear to the last digit. The analysis is
+  now wiped before the time history is set up.
+- **Generalized alpha is written the stable way round,** αM = min(1, α + 0.05)
+  and αF = α. It is unconditionally stable only for αM ≥ αF ≥ 0.5; written as
+  αF = α + 0.05 it diverged within 1.84 s once it was actually used.
+- **With the gravity analysis off, no gravity is applied.** Its load pattern
+  stayed in the domain on a Linear series nothing held constant, so every later
+  analysis scaled it: the time history carried **ten times** the building's
+  weight at ten seconds, and a pushover the weight times its load factor —
+  measured, a P-Delta frame came out 6 % too soft in the pushover and 9 % in
+  the cyclic run. The pattern is now written only when gravity runs.
+- **Under rigid diaphragms the pushover and the cyclic run control the roof
+  master.** The control joint was tied to it, and the Transformation handler
+  takes a tied joint's lateral freedoms out of the equations: the pushover
+  stopped at its first step, the cyclic run at its first drift, and from the
+  corner joint the pushover ran on to a roof displacement of **16.1 m**. The
+  Control node choice hides while diaphragms are on.
+- **The modal load pattern follows the mode with the most mass along the
+  push.** It followed mode 1 whatever the direction; in a frame weaker along Y,
+  mode 1 is a Y translation, and pushing along X it put almost no load on
+  anything. The pattern is renamed *Dominant mode*, and the mode it chose is in
+  the console and the manifest.
+- **Each convergence test is written with its own arguments.** `FixedNumIter`
+  takes an iteration count and stopped the script when handed a tolerance;
+  `NormDispAndUnbalance` and `NormDispOrUnbalance` take two tolerances and,
+  handed one, were never set — the analysis went on under a test nobody chose.
+  A **Force tolerance** field serves the two combined tests.
+
+### Fixed — combinations that could never run
+
+- **A time history, or a modal load pattern, without gravity** stopped at its
+  eigen call: *no EigenSOE has been set*, on the analysis the modal step left.
+
+### Added
+
+- **Warnings for the solver combinations measured to be wrong or to stop
+  early:** the `Diagonal` system, `SparseSYM` with an eigenvalue analysis (its
+  eigenvalues came out negative), `BandSPD` / `ProfileSPD` / `SparseSYM` with
+  Lagrange multipliers, `BandSPD` with a softening section in a pushover, the
+  `Linear` algorithm with a nonlinear section, and `FixedNumIter`, which
+  accepts every step. The free-base warning now says what was measured: the
+  analysis may report convergence, and what it reports is wrong.
+- **`tests/analyses.py`** — each integrator must differ from Newmark and leave
+  no sign of the swap, each lateral case must reach its target, and a model
+  with gravity off must carry no gravity. Against the 2.0.0 code it fails
+  fourteen checks.
+- **Known limits in the fuzz report.** A free base, or a roller base with a
+  solver that never checks equilibrium, finishes on nonsense for a reason the
+  README states; these are listed and counted, not failed.
+
+### Changed
+
+- The **Tolerance** field hides only when `FixedNumIter` is chosen and no
+  `forceBeamColumn` reads it for its own iterations. Its hint no longer says
+  NormUnbalance measures a displacement.
+- The **system** hint no longer says PFEM needs its own analysis type —
+  measured, it gives the reference result under the standard ones.
+- The **unit system** hint says a change of units converts every value.
+- A row of hidden half-width fields hides with them, so a group with nothing
+  left to show collapses.
+
+### Removed
+
+- **Dampers, for now.** The per-unit defaults of the damping coefficient were
+  converted as if it were a plain force, when it is a force per velocity to the
+  power α: the same damper started in N-mm came out 31.6 times stronger than in
+  kN-m, and the oil damper a thousand times. `DAMPERS_ENABLED` in
+  `js/model/devices.js` turns them back on; the code, catalogue and tests stay.
+- **`CentralDifference` and `ExplicitDifference`,** until the time history can
+  give them the Linear algorithm, mass on every degree of freedom and a step
+  below the critical one. Once actually used, both stopped at their first step.
+
+### Known and open
+
+- Explicit integration is to be measured and brought back.
+- Self weight on a tilted member is applied along its axis.
+- `ConfinedConcrete01`, `ElastomericX` and `LeadRubberX` stay withdrawn; their
+  root causes are not found.
+- A `FixedNumIter` run does `MAX_ITER` iterations on every step, so some
+  random combinations now time out rather than finish.
+
+  95 → 91 variants | 91 completed | 0 errors | analyses 22 of 22 | fuzz of 400: 102 completed (83 before), 6 known limits, no regressions
+
 ## [2.0.0] — 2026-09-27
 
 Every select and every toggle was drawn at random, together, four hundred times,
