@@ -61,14 +61,16 @@ const ZERO = [0, 0, 0];
 
 /* ─────────────────────────── support symbols ─────────────────────────── */
 
-/** Reads the restraint pattern back into the name of the support. */
+/**
+ * Reads the restraint pattern back into the name of the support. Only the
+ * three standard patterns get their symbol; anything else — a base joint held
+ * in ux alone, say — is drawn as a partial support rather than passed off as a
+ * pin, and its exact code is in the inspector and the node table.
+ */
+const SUPPORT_PATTERNS = { '111111': 'Fixed', '111000': 'Pinned', '001000': 'Roller' };
 function supportKind(fix) {
-  if (!fix) return null;
-  const held = fix.reduce((a, v) => a + (v ? 1 : 0), 0);
-  if (held === 6) return 'Fixed';
-  if (fix[0] && fix[1] && fix[2]) return 'Pinned';
-  if (fix[2]) return 'Roller';
-  return 'Pinned';
+  if (!fix || !fix.some(Boolean)) return null;
+  return SUPPORT_PATTERNS[fix.map((v) => (v ? 1 : 0)).join('')] || 'Partial';
 }
 
 /** A cone standing on its apex under the joint — the pin of every drawing. */
@@ -115,7 +117,16 @@ const SUPPORT_PIECES = {
     rollerBall(s, s * 1.05),
     groundBar(s, -s * 2.35),
   ],
+  // A small block under the joint: held in some directions, not in all.
+  Partial: (s) => [partialBlock(s)],
 };
+
+/** The block of a partial support, its top just under the joint. */
+function partialBlock(s) {
+  const geom = new THREE.BoxGeometry(s * 1.1, s * 1.1, s * 1.1);
+  geom.translate(0, 0, -s * 0.75);
+  return geom;
+}
 
 /** One of the two rollers a roller support rides on. */
 function rollerBall(s, x) {

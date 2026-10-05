@@ -653,6 +653,11 @@ html[data-theme="light"] .icon-moon { display: none; }
 .move-cell { display: flex; flex-direction: column; gap: 3px; }
 .move-cell span { font-size: 10.5px; color: var(--text-3); font-family: var(--mono); }
 .move-cell .input { height: 27px; font-size: 12px; }
+.restraint-box { margin-top: 10px; }
+.restraint-row { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
+.restraint-cell { display: flex; flex-direction: column; align-items: center; gap: 2px; cursor: pointer; }
+.restraint-cell span { font-size: 10.5px; color: var(--text-3); font-family: var(--mono); }
+.restraint-cell input:disabled + span { opacity: .45; }
 .move-actions { display: flex; gap: 6px; margin-top: 9px; }
 .move-actions .btn { flex: 1; justify-content: center; }
 .move-actions .btn:disabled { opacity: .45; cursor: default; }

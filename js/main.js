@@ -8,6 +8,7 @@
 
 import {
   state, resetAll, moveNodes, clearNodeOffsets, setElementOverrides, clearElementOverrides,
+  setNodeRestraints, clearNodeRestraints,
   deleteElements, replicate, manualEdits, clearManualEdits,
   undo, redo, subscribeHistory, exportProject, importProject,
   storage, subscribeStorage, validateState, firstIssue,
@@ -588,11 +589,12 @@ async function confirmGridChange() {
   if (builtGrid === null || signature === builtGrid) return true;
 
   const counts = manualEdits();
-  const total = counts.moves + counts.edits + counts.deleted + counts.added;
+  const total = counts.moves + counts.restraints + counts.edits + counts.deleted + counts.added;
   if (!total) return true;
 
   const parts = [];
   if (counts.moves) parts.push(`${counts.moves} moved joint${counts.moves > 1 ? 's' : ''}`);
+  if (counts.restraints) parts.push(`${counts.restraints} joint${counts.restraints > 1 ? 's with their' : ' with its'} own restraint`);
   if (counts.edits) parts.push(`${counts.edits} resized member${counts.edits > 1 ? 's' : ''}`);
   if (counts.deleted) parts.push(`${counts.deleted} deleted member${counts.deleted > 1 ? 's' : ''}`);
   if (counts.added) parts.push(`${counts.added} copied member${counts.added > 1 ? 's' : ''}`);
@@ -745,7 +747,9 @@ function refreshPanels() {
     + `${state.sectionKind} sections · ${state.unitSystem}`;
 
   renderSections(dom.sectionsRoot, state, model);
-  renderData(dom.dataRoot, state, model, { onClearMoves: clearAllJointMoves });
+  renderData(dom.dataRoot, state, model, {
+    onClearMoves: clearAllJointMoves, onClearRestraints: clearAllJointRestraints,
+  });
 }
 
 /** Drops every hand-moved joint at once, from the warning that reports them. */
@@ -756,6 +760,16 @@ function clearAllJointMoves() {
   compile();
   toast('Joint moves cleared',
     `${moved} joint${moved > 1 ? 's are' : ' is'} back on the parametric grid — Ctrl+Z brings the moves back.`,
+    'ok');
+}
+
+/** Gives every joint back to the Base restraint, from the warning that reports them. */
+function clearAllJointRestraints() {
+  const own = model ? model.nodes.filter((n) => n.ownRestraint).length : 0;
+  clearNodeRestraints();
+  compile();
+  toast('Joint restraints cleared',
+    `${own} joint${own > 1 ? 's are' : ' is'} back on the Base restraint — Ctrl+Z brings them back.`,
     'ok');
 }
 
@@ -789,6 +803,8 @@ function showSelection({ mode, elements, nodes }) {
     movePanel = renderNodeSelection(dom.inspector, dom.inspectorTitle, dom.inspectorBody, nodes, state, {
       onMove: applyMove,
       onReset: (tags) => { clearNodeOffsets(tags); recompileKeepingJoints(tags); },
+      onRestrain: applyRestraint,
+      onResetRestraint: (tags) => { clearNodeRestraints(tags); recompileKeepingJoints(tags); },
       draft: moveDraft,
       onDraft: (d) => { moveDraft = d; },
       extent: modelExtent(),
@@ -853,6 +869,15 @@ function applyMove(tags, delta) {
  * exception is a move that carries the joint out of the frame, which
  * `revealNodes` answers by panning across at the same zoom and angle.
  */
+function applyRestraint(tags, flags) {
+  setNodeRestraints(tags, flags);
+  recompileKeepingJoints(tags);
+  toast('Restraint applied',
+    `${tags.length} joint${tags.length > 1 ? 's' : ''} — ${flags.join(' ')}`
+      + `${flags.some(Boolean) ? '' : ' (unsupported)'}. The script now carries it.`,
+    'ok');
+}
+
 async function recompileKeepingJoints(tags) {
   await compile(false);
   viewer.setNodeSelection(tags);   // emits the selection, which redraws the panel

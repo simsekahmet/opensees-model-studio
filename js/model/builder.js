@@ -115,6 +115,10 @@ export function buildModel(s) {
   // member touching a moved joint picks up the new coordinates automatically.
   const offsets = s.nodeOffsets || {};
   const movedTags = [];
+  // A base joint may carry a restraint of its own in place of the Base
+  // restraint; six zero flags leave it unsupported.
+  const ownRestraints = s.nodeRestraints || {};
+  const ownTags = [];
 
   for (let level = 0; level <= nz; level++) {
     for (let j = 0; j < nyN; j++) {
@@ -123,12 +127,17 @@ export function buildModel(s) {
         const tag = nodeTag(level, i, j);
         const [dx, dy, dz] = offsets[tag] || [0, 0, 0];
         if (dx || dy || dz) movedTags.push(tag);
+        const supported = level === 0 && !carriesBearing;
+        const own = supported && Array.isArray(ownRestraints[tag]) ? ownRestraints[tag] : null;
+        if (own) ownTags.push(tag);
         const n = {
           tag,
           x: xs[i] + dx, y: ys[j] + dy, z: levelZ(level) + dz,
           i, j, level,
           // A column that has no bearing under it keeps its own restraint.
-          fix: level === 0 && !carriesBearing ? fixity : null,
+          fix: own ? (own.some(Boolean) ? own.map((f) => (f ? 1 : 0)) : null)
+            : supported ? fixity : null,
+          ownRestraint: !!own,
           mass: 0,
           master: false,
           moved: !!(dx || dy || dz),
@@ -568,9 +577,17 @@ export function buildModel(s) {
   const warn = (text) => warnings.push({ level: 'warn', text });
   const critical = (text) => warnings.push({ level: 'critical', text });
 
-  if (s.baseFixity === 'Free') {
+  // Judged on the supports the model actually has, now that base joints can
+  // carry restraints of their own: a free base with a few of them is held, and
+  // a fixed base with every joint freed is not.
+  if (!nodes.some((n) => (n.level === 0 || n.foundation) && n.fix)) {
     critical('The base is unrestrained — the model has rigid body modes and no static equilibrium exists '
       + 'under gravity. The analysis may still report convergence; whatever it reports is wrong.');
+  }
+  if (ownTags.length) {
+    warn(`${ownTags.length} joint${ownTags.length > 1 ? 's carry their' : ' carries its'} own restraint. `
+      + 'The restraints are stored against joint tags, which are renumbered when the bay or '
+      + 'story count changes.');
   }
   if (movedTags.length) {
     warn(`${movedTags.length} joint${movedTags.length > 1 ? 's have' : ' has'} been moved off the grid. `

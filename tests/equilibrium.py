@@ -45,6 +45,9 @@ CASES = [
     # not an error in the model, but it puts a case like that a few parts in
     # ten thousand off a statics check and there is nothing to learn from it.
     ("moved-column-line", "moved column line"),
+    # Base joints with restraints of their own, one of them left unsupported:
+    # the joints still held must carry the whole gravity load between them.
+    ("base-own-restraints", "own base restraints"),
     # A chevron splits its beam in two, and the second half used to carry no
     # slab load and no self weight: reactions came to 66 % of the applied load.
     ("damper-config-chevron", "chevron dampers"),

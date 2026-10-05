@@ -34,6 +34,12 @@ selection.
 - **Joints** — the inspector gives X, Y and Z displacement fields. Everything
   attached follows the joint, because element ends are read from the node
   coordinates.
+- **Base joint restraint** — a base joint can be given a restraint of its own:
+  six boxes, Ux Uy Uz Rx Ry Rz in global axes, in place of the Base restraint
+  that holds the rest. All six cleared leaves the joint unsupported. A pattern
+  other than fixed, pinned or roller is drawn as a small block. Joints above the
+  base cannot take one. The restraints are stored against joint tags, like
+  moves, and `Back to default` gives a joint back to the Base restraint.
 - **Delete** removes the selected members. The grid still numbers around them,
   so every other tag is exactly where it was.
 - **Ctrl + R** copies the selected members anywhere in three axes — a column to
@@ -128,7 +134,8 @@ Everything you set in the sidebar maps onto a real OpenSeesPy command:
 - **Elements** — `elasticBeamColumn`, `forceBeamColumn`, `dispBeamColumn`,
   `ElasticTimoshenkoBeam`, with `Lobatto` / `Legendre` / `NewtonCotes` / `Radau` /
   `Trapezoidal` integration and `Linear` / `PDelta` / `Corotational` transformations.
-- **Constraints** — base fixity and optional `rigidDiaphragm` master nodes.
+- **Constraints** — base fixity, a restraint of its own on any base joint, and optional
+  `rigidDiaphragm` master nodes.
 - **Slabs** — one `ShellMITC4`, `ShellDKGQ` or `ShellNLDKGQ` per bay panel over an
   `ElasticMembranePlateSection`, on the four columns that bound it. The shells carry
   stiffness and, if asked, their own mass; the slab load keeps its tributary
@@ -230,7 +237,7 @@ the time history included, run against a synthetic record — along with moved
 joints and edited members. `run_variants.py` then runs each one against a real
 `openseespy`.
 
-The last run on Python 3.12: **91 variants, 91 completed, 0 did not converge,
+The last run on Python 3.12: **92 variants, 92 completed, 0 did not converge,
 0 script errors.**
 
 Variants change one option at a time, which is exactly why they cannot see a
@@ -250,7 +257,8 @@ model file` is only a promise if every format survives the trip.
 
 `equilibrium.py` closes statics end to end: the sum of the vertical base
 reactions the solver reports is compared against the gravity load the builder
-applied — for a fixed base and a column line moved in plan, and, while dampers
+applied — for a fixed base, a column line moved in plan, base joints with
+restraints of their own (one of them left unsupported), and, while dampers
 are switched on, for chevron dampers, whose split beams once carried load on
 one half only. All of them balance to within the recorder's own output
 precision.

@@ -4,6 +4,31 @@ All notable changes to OpenSees Model Studio are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [semantic versioning](https://semver.org/).
 
+## [2.2.0] — 2026-10-05
+
+### Added
+
+- **A restraint of its own on any base joint.** Select base joints and the
+  inspector gives six boxes — Ux, Uy, Uz, Rx, Ry, Rz in global axes — with
+  `Apply restraint` and `Back to default`. The Base restraint holds every other
+  joint; all six boxes cleared leaves a joint unsupported. Joints above the
+  base cannot take one, and say so. The restraints are stored against joint
+  tags like moves: undone with Ctrl+Z, saved in the project file, the script and
+  the notebook, listed in a warning with `Clear all joint restraints`, and
+  offered for clearing when the grid changes.
+- The script writes them as a `RESTRAINT` table read by the base loop. A model
+  without them writes the same script as before, line for line.
+- A restraint other than fixed, pinned or roller is drawn as a small block. It
+  used to be drawn as a pin whatever it was.
+- The unrestrained-base warning now looks at the supports the model has: a free
+  base with a few joints held is not unrestrained, and a fixed base with every
+  joint cleared is.
+- **Checks:** a variant with three base joints restrained on their own, one of
+  them unsupported, in the statics check (the joints still held carry the whole
+  gravity load to 0.000024 %), and own restraints in the roundtrip.
+
+  91 → 92 variants | 92 completed | 0 errors | statics, isolation, analyses, results, units and fuzz pass
+
 ## [2.1.0] — 2026-09-27
 
 Every option left open after 2.0.0 was measured against a reference solution of

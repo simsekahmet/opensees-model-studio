@@ -254,7 +254,7 @@ function add(svg, tag, attrs) {
 
 /* ═══════════════════════════════ Model data ═════════════════════════ */
 
-export function renderData(root, s, model, { onClearMoves } = {}) {
+export function renderData(root, s, model, { onClearMoves, onClearRestraints } = {}) {
   root.textContent = '';
   if (!model) return empty(root, 'Build the model to see its node, element and story tables.');
 
@@ -318,6 +318,14 @@ export function renderData(root, s, model, { onClearMoves } = {}) {
       act.className = 'btn btn-ghost btn-sm warn-action';
       act.textContent = 'Clear all joint moves';
       act.addEventListener('click', onClearMoves);
+      card.append(act);
+    }
+    // Own restraints are pinned to joint tags in the same way.
+    if (onClearRestraints && model.nodes.some((node) => node.ownRestraint)) {
+      const act = document.createElement('button');
+      act.className = 'btn btn-ghost btn-sm warn-action';
+      act.textContent = 'Clear all joint restraints';
+      act.addEventListener('click', onClearRestraints);
       card.append(act);
     }
 
@@ -623,7 +631,9 @@ function sep() {
  * element that touches one of them follows, because element ends are read
  * from the node coordinates.
  */
-export function renderNodeSelection(panel, titleEl, bodyEl, nodes, s, { onMove, onReset, draft, onDraft, extent = 0 }) {
+export function renderNodeSelection(panel, titleEl, bodyEl, nodes, s, {
+  onMove, onReset, draft, onDraft, extent = 0, onRestrain, onResetRestraint,
+}) {
   const u = unitsOf(s.unitSystem);
   titleEl.textContent = nodes.length === 1
     ? `Joint ${nodes[0].tag}`
@@ -642,12 +652,14 @@ export function renderNodeSelection(panel, titleEl, bodyEl, nodes, s, { onMove, 
     const n = nodes[0];
     put('Position', `${fmt(n.x, 3)}, ${fmt(n.y, 3)}, ${fmt(n.z, 3)}`);
     put('Level', n.foundation ? 'Foundation' : String(n.level));
-    put('Restraint', n.fix ? n.fix.join(' ') : '— free —');
+    put('Restraint', (n.fix ? n.fix.join(' ') : '— free —') + (n.ownRestraint ? '  (own)' : ''));
     put('Mass', `${fmt(n.mass, 4)} ${u.mass}`);
   } else {
     const levels = [...new Set(nodes.map((n) => n.level))].sort((a, b) => a - b);
     put('Levels', levels.join(', '));
     put('Restrained', String(nodes.filter((n) => n.fix).length));
+    const own = nodes.filter((n) => n.ownRestraint).length;
+    if (own) put('Own restraint', String(own));
   }
 
   const offsets = s.nodeOffsets || {};
@@ -768,10 +780,79 @@ export function renderNodeSelection(panel, titleEl, bodyEl, nodes, s, { onMove, 
   box.append(hint);
 
   bodyEl.append(box);
+  if (onRestrain) bodyEl.append(restraintBox(nodes, { onRestrain, onResetRestraint }));
   panel.hidden = false;
 
   // Ctrl+R lands here, so give the first field focus.
   return { focus: () => inputs.dx.focus() };
+}
+
+/**
+ * Six boxes for the restraint of the selected base joints, in global axes. A
+ * joint above the base cannot take one: the boxes stay shut and say why. The
+ * boxes start from the joints' present restraint when they all share it, and
+ * empty when they do not.
+ */
+function restraintBox(nodes, { onRestrain, onResetRestraint }) {
+  const DOFS = ['Ux', 'Uy', 'Uz', 'Rx', 'Ry', 'Rz'];
+  const box = document.createElement('div');
+  box.className = 'move-box restraint-box';
+
+  const head = document.createElement('p');
+  head.className = 'move-head';
+  head.textContent = 'Restraint';
+  box.append(head);
+
+  const base = nodes.every((n) => n.level === 0 && !n.foundation);
+  const patterns = nodes.map((n) => (n.fix || [0, 0, 0, 0, 0, 0]).map((f) => (f ? 1 : 0)).join(''));
+  const shared = patterns.every((p) => p === patterns[0]) ? patterns[0] : null;
+
+  const row = document.createElement('div');
+  row.className = 'restraint-row';
+  const boxes = DOFS.map((dof, k) => {
+    const cell = document.createElement('label');
+    cell.className = 'restraint-cell';
+    const inp = document.createElement('input');
+    inp.type = 'checkbox';
+    inp.checked = !!shared && shared[k] === '1';
+    inp.disabled = !base;
+    inp.setAttribute('aria-label', `Restrain ${dof}`);
+    const lab = document.createElement('span');
+    lab.textContent = dof;
+    cell.append(inp, lab);
+    row.append(cell);
+    return inp;
+  });
+  box.append(row);
+
+  const actions = document.createElement('div');
+  actions.className = 'move-actions';
+  const apply = document.createElement('button');
+  apply.className = 'btn btn-primary btn-sm';
+  apply.textContent = 'Apply restraint';
+  apply.disabled = !base;
+  apply.addEventListener('click', () => onRestrain(nodes.map((n) => n.tag), boxes.map((b) => (b.checked ? 1 : 0))));
+  const reset = document.createElement('button');
+  reset.className = 'btn btn-ghost btn-sm';
+  reset.textContent = 'Back to default';
+  reset.disabled = !base || !nodes.some((n) => n.ownRestraint);
+  reset.addEventListener('click', () => onResetRestraint(nodes.map((n) => n.tag)));
+  actions.append(apply, reset);
+  box.append(actions);
+
+  const hint = document.createElement('p');
+  hint.className = 'move-hint';
+  if (!base) {
+    hint.textContent = 'Restraint can be assigned to base joints only.';
+    hint.dataset.tone = 'warn';
+  } else {
+    hint.textContent = shared
+      ? 'Held in global axes, for every selected joint. Back to default returns them to the Base restraint.'
+      : 'The selected joints are restrained differently, so the boxes start empty.';
+    hint.dataset.tone = 'muted';
+  }
+  box.append(hint);
+  return box;
 }
 
 /* ═════════════════════════════════ helpers ══════════════════════════ */

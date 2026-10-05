@@ -58,6 +58,8 @@ const CHANGES = {
 
 for (const [key, value] of Object.entries(CHANGES)) st.setValue(key, value);
 st.moveNodes([20001], [0.35, 0, 0]);
+st.setNodeRestraints([10001, 10002], [1, 1, 1, 0, 0, 0]);
+st.setNodeRestraints([10003], [0, 0, 0, 0, 0, 0]);
 st.setElementOverrides([100001], { D: 0.9 });
 
 const model = buildModel(st.state);

@@ -1,6 +1,6 @@
 {
   "name": "opensees-model-studio",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "A browser-based model builder for OpenSeesPy.",
   "author": "Ahmet Şimşek",
   "license": "CC-BY-NC-SA-4.0",

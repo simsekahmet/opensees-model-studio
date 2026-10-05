@@ -403,6 +403,9 @@ export function generateScript(s, model, gm = null) {
   }
 
   const fix = { Fixed: '1, 1, 1, 1, 1, 1', Pinned: '1, 1, 1, 0, 0, 0', Roller: '0, 0, 1, 0, 0, 0' }[s.baseFixity];
+  // Own restraints on base joints the model actually built at level 0.
+  const own = model.nodes.filter((n) => n.ownRestraint && n.level === 0)
+    .map((n) => [n.tag, (s.nodeRestraints[n.tag] || []).map((f) => (f ? 1 : 0))]);
 
   if (isolated) {
     w(
@@ -421,6 +424,23 @@ export function generateScript(s, model, gm = null) {
         '        else:',
         `            ops.fix(node_tag(0, i, j), ${fix})`,
       ] : []),
+      ''
+    );
+  } else if (own.length) {
+    // Base joints with a restraint of their own: the Base restraint covers
+    // the rest, and a joint whose six flags are all zero is left unsupported.
+    w(
+      `# Base restraint — ${s.baseFixity.toLowerCase()}, with ${own.length} joint${own.length > 1 ? 's' : ''} `
+        + `restrained on ${own.length > 1 ? 'their' : 'its'} own (ux, uy, uz, rx, ry, rz)`,
+      `BASE_FIX = ${fix ? `(${fix})` : 'None'}`,
+      'RESTRAINT = {',
+      ...chunk(own.map(([tag, r]) => `${tag}: (${r.join(', ')})`), 3).map((line) => `    ${line.join(', ')},`),
+      '}',
+      'for j in range(NY_N):',
+      '    for i in range(NX_N):',
+      '        restraint = RESTRAINT.get(node_tag(0, i, j), BASE_FIX)',
+      '        if restraint and any(restraint):',
+      '            ops.fix(node_tag(0, i, j), *restraint)',
       ''
     );
   } else if (fix) {

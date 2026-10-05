@@ -126,6 +126,15 @@ add('time-history-no-gravity', { ...TH, runGravity: false });
 add('diaphragm-pushover-cyclic', { rigidDiaphragm: true, runPushover: true, runCyclic: true, useRecorders: true });
 add('diaphragm-pushover-corner', { rigidDiaphragm: true, runPushover: true, pushNode: 'corner', useRecorders: true });
 
+/* ── base joints with a restraint of their own ───────────────────────
+   One corner pinned, one joint left unsupported, one held in all but one
+   rotation; the rest keep the fixed Base restraint. equilibrium.py holds the
+   reactions of the joints that are still supported to the whole gravity load. */
+add('base-own-restraints', {
+  useRecorders: true, runPushover: true,
+  nodeRestraints: { 10001: [1, 1, 1, 0, 0, 0], 10002: [0, 0, 0, 0, 0, 0], 10006: [1, 1, 1, 1, 1, 0] },
+});
+
 /* ── the modal load pattern ──────────────────────────────────────────
    The frame is weaker along Y, so its first mode is a Y translation. The
    pattern used to follow mode 1 whatever the push direction, and pushing along

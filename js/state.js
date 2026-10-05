@@ -31,6 +31,7 @@ export function defaultsFor(unitSystem = DEFAULT_SYSTEM) {
   // Everything below lives outside the schema: it is keyed by tag, or is a
   // list, rather than being one named parameter.
   out.nodeOffsets = {};        // tag → [dx, dy, dz]
+  out.nodeRestraints = {};     // base joint tag → [ux, uy, uz, rx, ry, rz], each 0 or 1
   out.elementOverrides = {};   // tag → { b, h, …, w }
   out.deletedElements = {};    // tag → true
   out.addedElements = [];      // members copied off the grid — see replicate()
@@ -219,6 +220,44 @@ export function clearNodeOffsets(tags = null) {
 }
 
 /**
+ * Gives base joints a restraint of their own, in place of the Base restraint
+ * that applies to the rest. A pattern is six flags in global axes — ux, uy, uz,
+ * rx, ry, rz — and all six zero leaves the joint unsupported. The restraints are
+ * stored against joint tags, the way moves are.
+ */
+export function setNodeRestraints(tags, pattern) {
+  mark();
+  const flags = restraintPattern(pattern);
+  const next = { ...state.nodeRestraints };
+  for (const tag of tags) {
+    if (flags) next[tag] = flags;
+    else delete next[tag];
+  }
+  state.nodeRestraints = next;
+  persist();
+  emit({ id: 'nodeRestraints', tags });
+}
+
+/** Gives the joints back to the Base restraint — or every joint, with no tags. */
+export function clearNodeRestraints(tags = null) {
+  mark();
+  if (!tags) state.nodeRestraints = {};
+  else {
+    const next = { ...state.nodeRestraints };
+    for (const tag of tags) delete next[tag];
+    state.nodeRestraints = next;
+  }
+  persist();
+  emit({ id: 'nodeRestraints', tags });
+}
+
+/** Six 0/1 flags, or null for anything that is not one. */
+export function restraintPattern(v) {
+  if (!Array.isArray(v) || v.length !== 6) return null;
+  return v.map((f) => (f ? 1 : 0));
+}
+
+/**
  * Edits individual members: section dimensions and the uniform slab load.
  * Keys carrying `undefined` are ignored, so a patch can set only what the user
  * actually filled in. An empty edit removes the member from the override table
@@ -331,6 +370,7 @@ export function clearAdded(ids = null) {
 export function manualEdits(s = state) {
   return {
     moves: Object.keys(s.nodeOffsets || {}).length,
+    restraints: Object.keys(s.nodeRestraints || {}).length,
     edits: Object.keys(s.elementOverrides || {}).length,
     deleted: Object.keys(s.deletedElements || {}).length,
     added: (s.addedElements || []).length,
@@ -341,6 +381,7 @@ export function manualEdits(s = state) {
 export function clearManualEdits() {
   mark();
   state.nodeOffsets = {};
+  state.nodeRestraints = {};
   state.elementOverrides = {};
   state.deletedElements = {};
   state.addedElements = [];
@@ -423,6 +464,11 @@ function merge(saved) {
   }
   // Fields added in a later version keep the default they were just given.
   merged.nodeOffsets = isPlainObject(saved.nodeOffsets) ? saved.nodeOffsets : {};
+  merged.nodeRestraints = {};
+  for (const [tag, v] of Object.entries(isPlainObject(saved.nodeRestraints) ? saved.nodeRestraints : {})) {
+    const flags = restraintPattern(v);
+    if (flags) merged.nodeRestraints[tag] = flags;
+  }
   merged.elementOverrides = isPlainObject(saved.elementOverrides) ? saved.elementOverrides : {};
   merged.deletedElements = isPlainObject(saved.deletedElements) ? saved.deletedElements : {};
   merged.addedElements = Array.isArray(saved.addedElements) ? saved.addedElements : [];
